@@ -1,0 +1,18 @@
+{
+  "name": "huss-huss-slop",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Huss Huss Slop — a self-hosted YouTube Shorts feed powered by yt-dlp.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node --check src/server.js && node --check public/app.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

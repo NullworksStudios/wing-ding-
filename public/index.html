@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#08070a" />
+    <meta name="description" content="Huss Huss Slop — a personal YouTube Shorts feed, streamed through yt-dlp." />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <title>Huss Huss Slop</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-view="feed">
+    <div id="app">
+      <header class="topbar" id="topbar">
+        <button class="brand" id="brandBtn" type="button" aria-label="Go to feed">
+          <span class="brand-a">HUSS</span><span class="brand-b">HUSS</span><span class="brand-c">SLOP</span>
+        </button>
+        <nav class="tabs" aria-label="Sections">
+          <button class="tab is-active" type="button" data-view="feed">Feed</button>
+          <button class="tab" type="button" data-view="search">Search</button>
+          <button class="tab" type="button" data-view="subs">Subs</button>
+          <button class="tab" type="button" data-view="liked">Liked</button>
+        </nav>
+        <button class="auth-pill" id="authPill" type="button" title="YouTube auth mode">…</button>
+      </header>
+
+      <main id="main">
+        <section class="view view-player is-active" id="view-feed" aria-label="Short player">
+          <div class="player" id="player"></div>
+          <div class="feed-state" id="feedState">
+            <div class="loader-orb"></div>
+            <p class="feed-state-title" id="feedStateTitle">Farming slop…</p>
+            <p class="feed-state-text" id="feedStateText">Warming up the yt-dlp machine.</p>
+            <div class="feed-state-actions" id="feedStateActions" hidden>
+              <button type="button" class="btn btn-lime" id="feedRetryBtn">Try again</button>
+              <button type="button" class="btn btn-ghost" data-go="search">Search instead</button>
+            </div>
+          </div>
+          <button class="back-fab" id="backFab" type="button" hidden>← Back</button>
+          <div class="player-end" id="playerEnd" hidden>That's all the slop for now.</div>
+        </section>
+
+        <section class="view view-page" id="view-search" aria-label="Search">
+          <div class="page-inner">
+            <div class="page-head">
+              <p class="eyebrow">Find your next brainworm</p>
+              <h1>Search the slop</h1>
+              <p class="page-sub">Type a topic, an <strong>@channel</strong>, or a <strong>#tag</strong>. Auto figures it out.</p>
+            </div>
+
+            <form class="searchbox" id="searchForm" autocomplete="off">
+              <input
+                id="searchInput"
+                name="q"
+                type="search"
+                enterkeyhint="search"
+                maxlength="120"
+                placeholder="dogs, @MrBeast, #satisfying…"
+                aria-label="Search YouTube Shorts"
+              />
+              <button type="submit" class="search-go" id="searchGo">Slop it</button>
+            </form>
+
+            <div class="chips" id="kindChips" role="group" aria-label="Search type">
+              <button type="button" class="chip is-active" data-kind="auto">Auto</button>
+              <button type="button" class="chip" data-kind="topic">Topic</button>
+              <button type="button" class="chip" data-kind="channel">Channel</button>
+              <button type="button" class="chip" data-kind="tag">Tag</button>
+            </div>
+
+            <div class="recent" id="recentWrap" hidden>
+              <p class="recent-label">Recent slop searches</p>
+              <div class="chips" id="recentChips"></div>
+            </div>
+
+            <div id="searchResults" class="results" aria-live="polite"></div>
+            <div class="statusline" id="searchStatus"></div>
+          </div>
+        </section>
+
+        <section class="view view-page" id="view-subs" aria-label="Subscriptions">
+          <div class="page-inner">
+            <div class="page-head">
+              <p class="eyebrow">Your channel lineup</p>
+              <h1>Subscribed slop</h1>
+              <p class="page-sub">Subscribe on any short and its channel gets pushed to the top of your For You feed.</p>
+            </div>
+            <div id="subsResults" class="subs" aria-live="polite"></div>
+            <div class="statusline" id="subsStatus"></div>
+          </div>
+        </section>
+
+        <section class="view view-page" id="view-liked" aria-label="Liked shorts">
+          <div class="page-inner">
+            <div class="page-head">
+              <p class="eyebrow">Your curated garbage</p>
+              <h1>Liked slop</h1>
+              <p class="page-sub">Every heart also teaches the feed what to serve next.</p>
+            </div>
+            <div id="likedResults" class="results" aria-live="polite"></div>
+            <div class="statusline" id="likedStatus"></div>
+          </div>
+        </section>
+      </main>
+
+      <div class="sheet" id="commentsSheet" hidden>
+        <div class="sheet-backdrop" data-close-sheet></div>
+        <div class="sheet-panel" role="dialog" aria-modal="true" aria-label="Comments">
+          <div class="sheet-grab"></div>
+          <div class="sheet-head">
+            <h2>Comments <span class="count" id="commentCount">0</span></h2>
+            <button type="button" class="icon-btn" data-close-sheet aria-label="Close comments">✕</button>
+          </div>
+          <div class="comment-list" id="commentList"></div>
+          <form class="comment-form" id="commentForm" autocomplete="off">
+            <input id="commentName" maxlength="32" placeholder="name" aria-label="Your name" />
+            <input id="commentText" maxlength="600" placeholder="say something sloppy…" aria-label="Comment" />
+            <button type="submit" class="icon-btn send" aria-label="Post comment">↑</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="toast" id="toast" role="status" hidden></div>
+    </div>
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
