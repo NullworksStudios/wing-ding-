@@ -15,12 +15,14 @@ import { Store } from './store.js';
 import { cleanText, extractVideoId, VIDEO_ID_RE } from './util.js';
 import { search, detectKind, friendlyError, ytdlpVersion } from './ytdlp.js';
 import { ensureDownload, getJob, cachedFile, cacheInfo, queueInfo, startDownloads, stopDownloads } from './downloads.js';
+import { markActive, isIdle, startIdleWatcher, stopIdleWatcher } from './idle.js';
 import { buildFeed, invalidateFeed } from './feed.js';
 
 ensureDirs();
 const store = new Store(path.join(DATA_DIR, 'db.json'));
 const auth = getAuth();
 startDownloads();
+startIdleWatcher();
 
 const app = express();
 app.set('trust proxy', true);
@@ -35,6 +37,13 @@ app.use((req, res, next) => {
     'Content-Security-Policy',
     "default-src 'self'; img-src 'self' data: https:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'self'; base-uri 'self'"
   );
+  next();
+});
+
+// Any real request (not health checks) counts as a visitor; the page also
+// sends /api/ping while it is visible so a quiet open tab keeps the app awake.
+app.use((req, res, next) => {
+  if (req.path !== '/api/health' && req.method !== 'HEAD') markActive();
   next();
 });
 
@@ -100,8 +109,12 @@ function serverInfo() {
   };
 }
 
+app.post('/api/ping', (req, res) => {
+  res.json({ ok: true });
+});
+
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, uptime: Math.round(process.uptime()) });
+  res.json({ ok: true, idle: isIdle(), uptime: Math.round(process.uptime()) });
 });
 
 app.get(
@@ -312,6 +325,7 @@ const server = app.listen(PORT, '0.0.0.0', () => {
 function shutdown(signal) {
   console.log(`[server] ${signal} received, shutting down.`);
   stopDownloads();
+  stopIdleWatcher();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 8_000).unref();
 }

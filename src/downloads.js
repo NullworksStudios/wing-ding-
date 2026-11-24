@@ -407,8 +407,14 @@ async function runJob(job) {
   console.error(`[download] ${job.id} failed:`, lastError?.stderr?.split('\n').slice(-3).join(' | ') || lastError?.message);
 }
 
+let paused = false;
+export function setDownloadsPaused(value) {
+  paused = Boolean(value);
+  if (!paused) pump();
+}
+
 function pump() {
-  if (shuttingDown) return;
+  if (shuttingDown || paused) return;
   while (activeCount < DOWNLOAD_CONCURRENCY && queue.length) {
     let index = queue.findIndex((id) => jobs.get(id)?.priority);
     if (index === -1) index = 0;
