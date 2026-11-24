@@ -1299,3 +1299,14 @@ function boot() {
 }
 
 boot();
+
+// Heartbeat: tells the server someone is looking, so it stays out of idle.
+// Hidden tabs send nothing, which lets the server pause background work.
+(function heartbeat() {
+  const ping = () => {
+    if (document.visibilityState === 'visible') fetch('/api/ping', { method: 'POST', keepalive: true }).catch(() => {});
+  };
+  setInterval(ping, 30_000);
+  document.addEventListener('visibilitychange', ping);
+  ping();
+})();

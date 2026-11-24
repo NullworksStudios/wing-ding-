@@ -23,6 +23,8 @@ export const DOWNLOAD_TIMEOUT_MS = positive(process.env.DOWNLOAD_TIMEOUT_MS, 240
 export const YTDLP_PATH = process.env.YTDLP_PATH || 'yt-dlp';
 export const YT_JS_RUNTIME = process.env.YT_JS_RUNTIME === 'off' ? '' : process.env.YT_JS_RUNTIME || 'node';
 export const YT_PLAYER_CLIENT = process.env.YT_PLAYER_CLIENT || 'visionos';
+// Seconds without a visitor before background work pauses. 0 disables idling.
+export const IDLE_AFTER_MS = Math.max(0, Number(process.env.IDLE_AFTER_SECONDS ?? 120) || 0) * 1000;
 export const MAX_SHORT_SECONDS = positive(process.env.MAX_SHORT_SECONDS, 180);
 
 let cachedAuth = null;
