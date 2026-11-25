@@ -22,6 +22,13 @@ const likedResults = $('#likedResults');
 const likedStatus = $('#likedStatus');
 const subsResults = $('#subsResults');
 const subsStatus = $('#subsStatus');
+const shareCreateBtn = $('#shareCreateBtn');
+const shareImportForm = $('#shareImportForm');
+const shareCodeInput = $('#shareCodeInput');
+const shareOut = $('#shareOut');
+const shareCodeValue = $('#shareCodeValue');
+const shareCopyBtn = $('#shareCopyBtn');
+const shareStatus = $('#shareStatus');
 const commentsSheet = $('#commentsSheet');
 const commentList = $('#commentList');
 const commentCount = $('#commentCount');
@@ -136,8 +143,10 @@ function meta(item) {
     title: item.title || '',
     channel: item.channel || '',
     channelId: item.channelId || '',
+    channelUrl: item.channelUrl || '',
     duration: item.duration || null,
-    thumb: item.thumb || ''
+    thumb: item.thumb || '',
+    tags: Array.isArray(item.tags) ? item.tags : []
   };
 }
 
@@ -161,7 +170,8 @@ function toast(message, isError = false) {
 }
 
 function plural(n, word) {
-  return `${n} ${word}${n === 1 ? '' : 's'}`;
+  if (n === 1) return `${n} ${word}`;
+  return `${n} ${word === 'search' ? 'searches' : `${word}s`}`;
 }
 
 /* ---------------- views ---------------- */
@@ -1127,6 +1137,54 @@ async function loadSubs() {
   }
 }
 
+/* ---------------- feed sharing ---------------- */
+
+async function createShareCode() {
+  if (!shareCreateBtn) return;
+  shareCreateBtn.disabled = true;
+  shareStatus.textContent = 'Minting a code…';
+  try {
+    const data = await api('/api/feed/share', { method: 'POST' });
+    shareCodeValue.value = data.code;
+    shareOut.hidden = false;
+    shareStatus.textContent = `Code ready · ${plural(data.counts.likes, 'like')} · ${plural(
+      data.counts.subscriptions,
+      'subscription'
+    )}`;
+    try {
+      await navigator.clipboard.writeText(data.code);
+      toast('Feed code copied');
+    } catch {
+      toast('Feed code ready');
+    }
+  } catch (error) {
+    shareStatus.textContent = error.message;
+  } finally {
+    shareCreateBtn.disabled = false;
+  }
+}
+
+async function importShareCode(code) {
+  const clean = String(code || '').trim().toLowerCase();
+  if (!clean) return;
+  shareStatus.textContent = 'Importing…';
+  try {
+    const data = await api('/api/feed/import', { method: 'POST', body: { code: clean } });
+    shareStatus.textContent = `Imported ${plural(data.likes, 'like')} · ${plural(
+      data.subscriptions,
+      'subscription'
+    )} · ${plural(data.searches, 'search')}. Reloading.`;
+    shareCodeInput.value = '';
+    state.subsDirty = true;
+    state.likedDirty = true;
+    state.feedDirty = true;
+    await Promise.all([loadSubs(), loadLiked()]).catch(() => {});
+    toast('Feed cloned');
+  } catch (error) {
+    shareStatus.textContent = error.message;
+  }
+}
+
 /* ---------------- events ---------------- */
 
 function bindEvents() {
@@ -1219,6 +1277,22 @@ function bindEvents() {
   commentName.addEventListener('input', () => {
     state.nickname = commentName.value;
     localStorage.setItem('hhl.name', commentName.value);
+  });
+
+  shareCreateBtn?.addEventListener('click', createShareCode);
+  shareCopyBtn?.addEventListener('click', async () => {
+    if (!shareCodeValue.value) return;
+    try {
+      await navigator.clipboard.writeText(shareCodeValue.value);
+      toast('Feed code copied');
+    } catch {
+      shareCodeValue.select();
+      toast('Copy the selected code');
+    }
+  });
+  shareImportForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    importShareCode(shareCodeInput.value);
   });
 
   feedRetryBtn.addEventListener('click', () => loadFeed(true));

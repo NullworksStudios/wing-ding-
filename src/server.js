@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import express from 'express';
 import {
   PORT,
@@ -17,6 +18,7 @@ import { search, detectKind, friendlyError, ytdlpVersion } from './ytdlp.js';
 import { ensureDownload, getJob, cachedFile, cacheInfo, queueInfo, startDownloads, stopDownloads } from './downloads.js';
 import { markActive, isIdle, startIdleWatcher, stopIdleWatcher } from './idle.js';
 import { buildFeed, invalidateFeed } from './feed.js';
+import { enrichItems } from './enrich.js';
 
 ensureDirs();
 const store = new Store(path.join(DATA_DIR, 'db.json'));
@@ -44,6 +46,51 @@ app.use((req, res, next) => {
 // sends /api/ping while it is visible so a quiet open tab keeps the app awake.
 app.use((req, res, next) => {
   if (req.path !== '/api/health' && req.method !== 'HEAD') markActive();
+  next();
+});
+
+const CLIENT_COOKIE = 'hhl_cid';
+const CLIENT_ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+
+function parseCookies(header) {
+  const out = {};
+  for (const part of String(header || '').split(';')) {
+    const index = part.indexOf('=');
+    if (index === -1) continue;
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (key) out[key] = decodeURIComponent(value);
+  }
+  return out;
+}
+
+function readClientId(req) {
+  const header = String(req.get('x-client-id') || '').trim();
+  if (CLIENT_ID_RE.test(header)) return header;
+  const fromCookie = parseCookies(req.headers.cookie || '')[CLIENT_COOKIE];
+  if (CLIENT_ID_RE.test(String(fromCookie || ''))) return String(fromCookie);
+  return null;
+}
+
+// Each browser/device gets its own likes, history, subscriptions and cached
+// feed. Comments stay global on purpose so everyone sees the same thread.
+app.use((req, res, next) => {
+  let clientId = readClientId(req);
+  const navigating =
+    (req.method === 'GET' || req.method === 'HEAD') &&
+    (req.path === '/' || req.path === '/index.html') &&
+    String(req.get('sec-fetch-mode') || '') === 'navigate';
+  // Only a real page visit can adopt the profile from pre-multi-client
+  // versions (the old global likes/subscriptions). API clients and bots must
+  // not steal it, so they get a fresh anonymous id instead.
+  if (!clientId && navigating) clientId = store.claimPrimaryClient();
+  if (!clientId) clientId = randomBytes(9).toString('base64url');
+  res.cookie(CLIENT_COOKIE, clientId, {
+    maxAge: 365 * 24 * 60 * 60 * 1000,
+    sameSite: 'lax',
+    httpOnly: true
+  });
+  req.clientId = clientId;
   next();
 });
 
@@ -85,6 +132,7 @@ function metaFromReq(req) {
     title: cleanText(body.title, 300),
     channel: cleanText(body.channel, 120),
     channelId: cleanText(body.channelId, 64),
+    channelUrl: typeof body.channelUrl === 'string' ? body.channelUrl : '',
     duration: Number(body.duration) || null,
     thumb: typeof body.thumb === 'string' ? body.thumb : ''
   };
@@ -127,8 +175,8 @@ app.get(
       ytdlp,
       cache: cacheInfo(),
       queue: queueInfo(),
-      stats: store.stats(),
-      recentSearches: store.recentSearches(8),
+      stats: store.stats(req.clientId),
+      recentSearches: store.recentSearches(req.clientId, 8),
       uptime: Math.round(process.uptime())
     });
   })
@@ -143,10 +191,11 @@ app.get(
       .map((id) => id.trim())
       .filter((id) => VIDEO_ID_RE.test(id))
       .slice(0, 80);
-    const feed = await buildFeed(store, { limit, exclude });
+    const feed = await buildFeed(store, req.clientId, { limit, exclude });
+    const items = await enrichItems(feed.items);
     res.json({
       ...feed,
-      items: feed.items.map((item) => ({ ...item, subscribed: store.isSubscribed(item) }))
+      items: items.map((item) => ({ ...item, subscribed: store.isSubscribed(item, req.clientId) }))
     });
   })
 );
@@ -163,12 +212,13 @@ app.get(
     const normalizedKind = ['auto', 'topic', 'channel', 'tag'].includes(kind) ? kind : 'auto';
     try {
       const result = await search(q, normalizedKind, 24);
-      store.recordSearch(q, result.kind);
+      store.recordSearch(q, result.kind, req.clientId);
+      const items = await enrichItems(result.items);
       res.json({
         query: q,
         kind: result.kind,
         detectedKind: detectKind(q),
-        items: result.items.map((item) => ({ ...item, subscribed: store.isSubscribed(item) }))
+        items: items.map((item) => ({ ...item, subscribed: store.isSubscribed(item, req.clientId) }))
       });
     } catch (error) {
       res.status(502).json({ error: friendlyError(error), query: q });
@@ -176,40 +226,89 @@ app.get(
   })
 );
 
-app.get('/api/liked', (req, res) => {
-  res.json({ items: store.data.likes, count: store.data.likes.length });
-});
+app.get(
+  '/api/liked',
+  wrap(async (req, res) => {
+    const items = await enrichItems(store.getLiked(req.clientId));
+    store.hydrateLiked(items, req.clientId);
+    res.json({
+      items: items.map((item) => ({ ...item, subscribed: store.isSubscribed(item, req.clientId) })),
+      count: items.length
+    });
+  })
+);
 
 app.get('/api/subscriptions', (req, res) => {
-  const items = store.data.subscriptions || [];
+  const items = store.subscriptions(req.clientId);
   res.json({ items, count: items.length });
 });
 
 app.post('/api/subscriptions', (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
   if (body.subscribed === false) {
-    const result = store.removeSubscription(body);
-    invalidateFeed();
+    const result = store.removeSubscription(body, req.clientId);
+    invalidateFeed(req.clientId);
     return res.json(result);
   }
-  const result = store.addSubscription(body);
+  const result = store.addSubscription(body, req.clientId);
   if (!result.subscribed) {
     return res.status(400).json({ error: result.error || 'Could not subscribe to that channel.' });
   }
-  invalidateFeed();
+  invalidateFeed(req.clientId);
   res.json(result);
 });
 
 app.delete('/api/subscriptions/:key', (req, res) => {
-  const result = store.removeSubscription(decodeURIComponent(req.params.key || ''));
-  invalidateFeed();
+  const result = store.removeSubscription(decodeURIComponent(req.params.key || ''), req.clientId);
+  invalidateFeed(req.clientId);
   res.json(result);
+});
+
+app.post('/api/feed/share', (req, res) => {
+  const share = store.createShare(req.clientId);
+  if (!share) return res.status(400).json({ error: 'Nothing to share yet. Like something first.' });
+  res.json({
+    code: share.code,
+    createdAt: share.createdAt,
+    counts: {
+      likes: share.snapshot.likes.length,
+      searches: share.snapshot.searches.length,
+      subscriptions: share.snapshot.subscriptions.length
+    }
+  });
+});
+
+app.get('/api/feed/shared/:code', (req, res) => {
+  const share = store.getShare(req.params.code);
+  if (!share) return res.status(404).json({ error: 'That feed code does not exist.' });
+  res.json({
+    code: share.code,
+    createdAt: share.createdAt,
+    counts: {
+      likes: share.snapshot.likes.length,
+      searches: share.snapshot.searches.length,
+      subscriptions: share.snapshot.subscriptions.length
+    }
+  });
+});
+
+app.post('/api/feed/import', (req, res) => {
+  const code = cleanText(req.body?.code, 12);
+  if (!code) return res.status(400).json({ error: 'Enter a feed code.' });
+  const share = store.getShare(code);
+  if (!share) return res.status(404).json({ error: 'That feed code does not exist.' });
+  const result = store.importShare(req.clientId, share);
+  invalidateFeed(req.clientId);
+  res.json({ ...result, code: share.code });
 });
 
 app.get(
   '/api/recent',
   wrap(async (req, res) => {
-    res.json({ searches: store.recentSearches(12), likes: store.data.likes.length });
+    res.json({
+      searches: store.recentSearches(req.clientId, 12),
+      likes: store.getLiked(req.clientId).length
+    });
   })
 );
 
@@ -223,13 +322,13 @@ app.post('/api/video/:id', (req, res) => {
   const priority = Boolean(req.body?.priority);
   const job = ensureDownload(id, { priority });
   if (!job) return res.status(400).json({ error: 'Bad video id' });
-  res.json({ ...job, liked: store.isLiked(id), comments: store.commentCount(id) });
+  res.json({ ...job, liked: store.isLiked(id, req.clientId), comments: store.commentCount(id) });
 });
 
 app.get('/api/video/:id/status', (req, res) => {
   const id = validVideoId(req, res);
   if (!id) return;
-  res.json({ ...getJob(id), liked: store.isLiked(id), comments: store.commentCount(id) });
+  res.json({ ...getJob(id), liked: store.isLiked(id, req.clientId), comments: store.commentCount(id) });
 });
 
 app.get('/api/video/:id/file', (req, res) => {
@@ -251,23 +350,23 @@ app.post('/api/video/:id/like', (req, res) => {
   if (!id) return;
   const meta = metaFromReq(req);
   store.rememberVideo(meta);
-  const result = store.addLike(meta);
-  invalidateFeed();
+  const result = store.addLike(meta, req.clientId);
+  invalidateFeed(req.clientId);
   res.json({ ...result, id, comments: store.commentCount(id) });
 });
 
 app.delete('/api/video/:id/like', (req, res) => {
   const id = validVideoId(req, res);
   if (!id) return;
-  const result = store.removeLike(id);
-  invalidateFeed();
+  const result = store.removeLike(id, req.clientId);
+  invalidateFeed(req.clientId);
   res.json({ ...result, id });
 });
 
 app.post('/api/video/:id/view', (req, res) => {
   const id = validVideoId(req, res);
   if (!id) return;
-  store.recordView(metaFromReq(req));
+  store.recordView(metaFromReq(req), req.clientId);
   res.json({ ok: true });
 });
 

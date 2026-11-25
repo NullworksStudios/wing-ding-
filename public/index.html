@@ -87,6 +87,22 @@
               <h1>Subscribed slop</h1>
               <p class="page-sub">Subscribe on any short and its channel gets pushed to the top of your For You feed.</p>
             </div>
+            <div class="share-box" id="shareBox">
+              <p class="eyebrow">Portable feed</p>
+              <p class="share-copy">Export this device's likes, searches and subscriptions as a short code, or paste a code to clone someone else's For You.</p>
+              <div class="share-actions">
+                <button class="btn btn-lime" id="shareCreateBtn" type="button">Export code</button>
+                <form class="share-import" id="shareImportForm" autocomplete="off">
+                  <input id="shareCodeInput" maxlength="20" placeholder="paste a code" aria-label="Feed code" />
+                  <button class="btn btn-ghost" type="submit">Import</button>
+                </form>
+              </div>
+              <div class="share-out" id="shareOut" hidden>
+                <input id="shareCodeValue" readonly aria-label="Your feed code" />
+                <button class="btn btn-ghost" id="shareCopyBtn" type="button">Copy</button>
+              </div>
+              <div class="statusline" id="shareStatus"></div>
+            </div>
             <div id="subsResults" class="subs" aria-live="polite"></div>
             <div class="statusline" id="subsStatus"></div>
           </div>

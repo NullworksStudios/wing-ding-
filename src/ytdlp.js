@@ -248,7 +248,7 @@ function queryTerms(query) {
     .toLowerCase()
     .replace(/^#/, '')
     .split(/[^\p{L}\p{N}_]+/u)
-    .filter((word) => word.length >= 3)
+    .filter((word) => word.length >= 3 || word === 'ai')
     .slice(0, 6);
 }
 
@@ -262,6 +262,17 @@ function countTerms(item, terms) {
   return matched;
 }
 
+// Titles carry hashtags, emoji and punctuation; strip them so an "exact
+// match" test compares the words the viewer actually read.
+function cleanTitle(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/#[\p{L}\p{N}_]+/gu, ' ')
+    .replace(/[^\p{L}\p{N} ]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function rank(groups, limit, terms = []) {
   const seen = new Set();
   const scored = [];
@@ -272,6 +283,12 @@ function rank(groups, limit, terms = []) {
       seen.add(item.id);
       let score = scoreEntry(item, index, boost);
       const matched = countTerms(item, terms);
+      const phrase = terms.join(' ');
+      const title = cleanTitle(item.title);
+      // Exact matches always win: a short literally titled like the query
+      // goes above looser matches that merely contain the words.
+      if (phrase && title === phrase) score += 7;
+      else if (phrase && title.startsWith(phrase)) score += 2.2;
       // Multi-word searches must honour every word. An "any word" match is not
       // enough: a search for "funny roblox stories" should not float generic
       // "stories" clips to the top, and items matching nothing should not be
@@ -282,6 +299,10 @@ function rank(groups, limit, terms = []) {
         } else {
           score += (matched / terms.length) * 4;
           if (matched === terms.length) score += 1.5;
+          // Exact phrase anywhere in the title beats merely containing all the
+          // words in separate places.
+          const haystack = `${item.title} ${(item.tags || []).join(' ')}`.toLowerCase();
+          if (haystack.includes(phrase)) score += 2.5;
         }
       } else if (matched > 0) {
         score += 1.2;

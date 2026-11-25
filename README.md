@@ -16,10 +16,18 @@ yt-dlp's `visionos` player client when no YouTube cookies are available.
   or channel ID). Auto-detects the kind, or force it with the chips.
 - **For You feed** — builds preferences from your likes, searches, and watch
   history, then pulls matching hashtag/shorts candidates. Cold start uses rotating
-  seed topics. Recently watched videos are filtered out.
+  seed topics. Recently watched videos are filtered out. One random "slop" clip is
+  spliced in per feed without touching your tastes.
+- **Subscriptions** — subscribe from any short (feed, liked, or search results).
+  Subscribed channels and channels like them are pushed to the top of For You.
+- **Per-device profiles** — every browser gets its own id (cookie) with separate
+  likes, history, searches, subscriptions, and cached feed. Comments stay shared.
+- **Portable feeds** — export a profile as an 8-character code in the Subs tab and
+  import it on another device to clone its likes, searches, and subscriptions.
 - **Likes** — persisted to a JSON store and shown in the Liked tab, which also
   feeds personalization.
-- **Comments** — local, per-video comments with a bottom sheet UI.
+- **Comments** — server-side per-video comments with a bottom sheet UI, shared by
+  every visitor and persisted in `$DATA_DIR/db.json`.
 - **Adaptive quality** — tries 720p first; if the download falls below
   `SLOW_KBPS`, it kills the attempt and retries at 480p, then prefers 480p for the
   rest of the process.
@@ -140,7 +148,10 @@ Express (src/server.js)
 - Format selection caps **both** width and height (720×1280 vertical Shorts), so
   a "480p" fallback really selects 480p instead of silently matching 720p.
 - The feed extracts hashtags/keywords from liked and searched videos, caches the
-  result for 5 minutes, and invalidates on like changes.
+  result per client for 5 minutes, and invalidates on like or subscription changes.
+- A client is identified by the `hhl_cid` cookie (or an `x-client-id` header for
+  scripts). The first real page visit adopts the pre-multi-client profile, so an
+  existing install keeps its likes and subscriptions.
 
 ## API sketch
 
@@ -148,16 +159,20 @@ Express (src/server.js)
 | --- | --- | --- |
 | `GET` | `/api/health` | Liveness probe for Railway. |
 | `GET` | `/api/status` | Auth mode, yt-dlp version, cache/queue stats. |
-| `GET` | `/api/feed?limit=18` | Personalized feed. |
-| `GET` | `/api/search?q=...&kind=auto\|topic\|tag\|channel` | Search Shorts. |
+| `GET` | `/api/feed?limit=18` | Personalized feed for this client. |
+| `POST` | `/api/feed/share` | Mint a share code for this client's tastes. |
+| `GET` | `/api/feed/shared/:code` | Inspect a share code's counts. |
+| `POST` | `/api/feed/import` | Replace this client's tastes with `{ "code": "..." }`. |
+| `GET` | `/api/search?q=...&kind=auto\|topic\|tag\|channel` | Search Shorts (exact titles first). |
 | `GET` | `/api/liked` | Liked videos. |
+| `GET` / `POST` / `DELETE` | `/api/subscriptions` | List, toggle (`subscribed:false`), or remove subscriptions. |
 | `GET` | `/api/recent` | Recent searches + like count. |
 | `POST` | `/api/video/:id` | Queue/download a video. Body may include metadata and `priority`. |
 | `GET` | `/api/video/:id/status` | Download job status. |
 | `GET` | `/api/video/:id/file` | MP4 stream (Range supported). |
 | `POST` / `DELETE` | `/api/video/:id/like` | Like / unlike. |
 | `POST` | `/api/video/:id/view` | Record a view for feed filtering. |
-| `GET` / `POST` | `/api/video/:id/comments` | Read / add comments. |
+| `GET` / `POST` | `/api/video/:id/comments` | Read / add comments (shared by everyone). |
 
 ## Troubleshooting
 
@@ -187,15 +202,17 @@ Set `DOWNLOAD_CONCURRENCY=1`, reduce `MAX_HEIGHT` to `480`, and/or lower
 ```
 src/
   config.js     env parsing + auth resolution (cookies vs visionOS)
-  server.js     Express routes, security headers, cache/queue status
-  ytdlp.js      search (topic/tag/channel), normalization, auth args
+  server.js     Express routes, client ids, security headers, cache/queue status
+  ytdlp.js      search (topic/tag/channel), normalization, auth args, ranking
   downloads.js  queue, slow-link fallback, format choice, LRU cache
-  feed.js       personalization + feed assembly
-  store.js      JSON persistence (likes, history, searches, comments)
+  feed.js       per-client personalization, subscriptions, related tags, wildcard
+  enrich.js     oEmbed channel metadata for items yt-dlp left blank
+  idle.js       pauses new downloads when nobody is watching
+  store.js      JSON persistence (clients, likes, history, searches, subs, shares)
   util.js       ids, text cleanup, tag extraction
 public/
-  index.html    app shell (feed, search, liked, comments)
-  app.js        player, search, likes, comments, polling
+  index.html    app shell (feed, search, subs, liked, comments)
+  app.js        player, search, likes, comments, subscriptions, share codes
   styles.css    dark TikTok-ish UI
 Dockerfile      Railway image (yt-dlp + ffmpeg)
 railway.json    build + healthcheck config
@@ -208,5 +225,7 @@ acceptable for a given video or region is between you and YouTube's Terms of
 Service. Don't run a public, high-traffic instance, and don't redistribute
 downloaded content. Use cookies only from an account you control.
 
-Everything is stored locally: likes, history, search history, and comments live
-in `$DATA_DIR/db.json`. There are no accounts and no external database.
+Everything is stored locally in `$DATA_DIR/db.json`: per-device profiles (likes,
+history, search history, subscriptions), share codes, and the global comment
+threads and video metadata. There are no accounts and no external database. Mount
+a volume at `/app/data` or all of it disappears on the next deploy.

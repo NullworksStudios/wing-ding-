@@ -921,6 +921,67 @@ body[data-view="liked"] .topbar {
   background: var(--card);
 }
 
+.share-box {
+  margin: 0 0 18px;
+  padding: 14px 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--card);
+}
+
+.share-copy {
+  margin: 4px 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.share-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.share-import {
+  display: flex;
+  flex: 1 1 220px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.share-import input,
+.share-out input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--fg);
+  padding: 9px 11px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: lowercase;
+}
+
+.share-out {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.share-out input {
+  font-size: 15px;
+  letter-spacing: 0.18em;
+  text-align: center;
+}
+
+.share-box .btn {
+  flex: none;
+  padding: 9px 13px;
+  font-size: 12px;
+}
+
 .sub-avatar {
   flex: 0 0 42px;
   width: 42px;
