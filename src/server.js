@@ -265,10 +265,12 @@ app.delete('/api/subscriptions/:key', (req, res) => {
 });
 
 app.post('/api/feed/share', (req, res) => {
-  const share = store.createShare(req.clientId);
+  const name = cleanText(req.body?.name, 40);
+  const share = store.createShare(req.clientId, { name });
   if (!share) return res.status(400).json({ error: 'Nothing to share yet. Like something first.' });
   res.json({
     code: share.code,
+    name: share.name,
     createdAt: share.createdAt,
     counts: {
       likes: share.snapshot.likes.length,
@@ -278,11 +280,33 @@ app.post('/api/feed/share', (req, res) => {
   });
 });
 
+app.get('/api/feed/shares', (req, res) => {
+  const items = store.exports(req.clientId).map((entry) => {
+    const share = store.getShare(entry.code);
+    return {
+      ...entry,
+      share: share
+        ? {
+            likes: share.snapshot.likes.length,
+            searches: share.snapshot.searches.length,
+            subscriptions: share.snapshot.subscriptions.length
+          }
+        : null
+    };
+  });
+  res.json({ items, count: items.length });
+});
+
+app.delete('/api/feed/shares/:code', (req, res) => {
+  res.json(store.removeExport(req.clientId, String(req.params.code || '').toLowerCase()));
+});
+
 app.get('/api/feed/shared/:code', (req, res) => {
   const share = store.getShare(req.params.code);
   if (!share) return res.status(404).json({ error: 'That feed code does not exist.' });
   res.json({
     code: share.code,
+    name: share.name || '',
     createdAt: share.createdAt,
     counts: {
       likes: share.snapshot.likes.length,

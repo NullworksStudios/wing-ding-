@@ -20,6 +20,7 @@ function emptyProfile() {
     history: [],
     searches: [],
     subscriptions: [],
+    exports: [],
     updatedAt: Date.now()
   };
 }
@@ -424,12 +425,14 @@ export class Store {
     };
   }
 
-  createShare(clientId, snapshot) {
-    const profile = this.profile(clientId, { create: false });
+  createShare(clientId, { name = '', snapshot } = {}) {
+    const profile = this.profile(clientId);
     if (!profile) return null;
     const code = shareCode();
+    const label = cleanText(name, 40) || 'My slop feed';
     this.data.shares[code] = {
       code,
+      name: label,
       createdAt: Date.now(),
       snapshot: {
         likes: (snapshot?.likes || profile.likes).slice(0, 80),
@@ -437,6 +440,11 @@ export class Store {
         subscriptions: (snapshot?.subscriptions || profile.subscriptions).slice(0, 50)
       }
     };
+    profile.exports = Array.isArray(profile.exports) ? profile.exports : [];
+    profile.exports = [
+      { code, name: label, at: Date.now() },
+      ...profile.exports.filter((entry) => entry.code !== code)
+    ].slice(0, 20);
     const entries = Object.entries(this.data.shares);
     if (entries.length > MAX_SHARES) {
       entries.sort((a, b) => (b[1].createdAt || 0) - (a[1].createdAt || 0));
@@ -445,6 +453,24 @@ export class Store {
     this.bump();
     this.save();
     return this.data.shares[code];
+  }
+
+  exports(clientId) {
+    const profile = this.profile(clientId, { create: false });
+    return Array.isArray(profile?.exports) ? profile.exports : [];
+  }
+
+  removeExport(clientId, code) {
+    const profile = this.profile(clientId, { create: false });
+    if (!profile || !Array.isArray(profile.exports)) return { removed: false };
+    const before = profile.exports.length;
+    profile.exports = profile.exports.filter((entry) => entry.code !== code);
+    if (profile.exports.length !== before) {
+      profile.updatedAt = Date.now();
+      this.bump();
+      this.save();
+    }
+    return { removed: profile.exports.length !== before };
   }
 
   getShare(code) {
@@ -463,11 +489,13 @@ export class Store {
       ? snapshot.subscriptions.slice(0, MAX_SUBSCRIPTIONS)
       : [];
     profile.history = [];
+    profile.lastImport = { code: share.code, name: share.name || '', at: Date.now() };
     profile.updatedAt = Date.now();
     this.bump();
     this.save();
     return {
       imported: true,
+      name: share.name || '',
       likes: profile.likes.length,
       searches: profile.searches.length,
       subscriptions: profile.subscriptions.length

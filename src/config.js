@@ -19,6 +19,7 @@ export const FALLBACK_HEIGHT = Math.round(positive(process.env.FALLBACK_HEIGHT, 
 export const SLOW_KBPS = positive(process.env.SLOW_KBPS, 350);
 export const SLOW_GRACE_MS = positive(process.env.SLOW_GRACE_MS, 12_000);
 export const DOWNLOAD_CONCURRENCY = Math.min(3, Math.round(positive(process.env.DOWNLOAD_CONCURRENCY, 1)));
+export const DOWNLOAD_FRAGMENTS = Math.min(16, Math.round(positive(process.env.DOWNLOAD_FRAGMENTS, 8)));
 export const DOWNLOAD_TIMEOUT_MS = positive(process.env.DOWNLOAD_TIMEOUT_MS, 240_000);
 export const YTDLP_PATH = process.env.YTDLP_PATH || 'yt-dlp';
 export const YT_JS_RUNTIME = process.env.YT_JS_RUNTIME === 'off' ? '' : process.env.YT_JS_RUNTIME || 'node';

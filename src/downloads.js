@@ -9,6 +9,7 @@ import {
   SLOW_KBPS,
   SLOW_GRACE_MS,
   DOWNLOAD_CONCURRENCY,
+  DOWNLOAD_FRAGMENTS,
   DOWNLOAD_TIMEOUT_MS,
   YT_JS_RUNTIME,
   YTDLP_PATH,
@@ -81,7 +82,12 @@ function baseArgs() {
     '--fragment-retries',
     '3',
     '--concurrent-fragments',
-    '4'
+    String(DOWNLOAD_FRAGMENTS),
+    // Bigger HTTP chunks avoid YouTube's throttled small-range pacing and cut
+    // the number of round trips per video.
+    '--http-chunk-size',
+    '10M',
+    '--no-mtime'
   ];
   if (YT_JS_RUNTIME) args.push('--js-runtimes', YT_JS_RUNTIME);
   return args;

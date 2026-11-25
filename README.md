@@ -16,14 +16,16 @@ yt-dlp's `visionos` player client when no YouTube cookies are available.
   or channel ID). Auto-detects the kind, or force it with the chips.
 - **For You feed** — builds preferences from your likes, searches, and watch
   history, then pulls matching hashtag/shorts candidates. Cold start uses rotating
-  seed topics. Recently watched videos are filtered out. One random "slop" clip is
-  spliced in per feed without touching your tastes.
+  seed topics. Recently watched videos are filtered out. Sources are interleaved
+  round-robin with at most two clips per channel, plus one rotating fresh topic and
+  one random "slop" clip that never touches your tastes.
 - **Subscriptions** — subscribe from any short (feed, liked, or search results).
   Subscribed channels and channels like them are pushed to the top of For You.
 - **Per-device profiles** — every browser gets its own id (cookie) with separate
   likes, history, searches, subscriptions, and cached feed. Comments stay shared.
-- **Portable feeds** — export a profile as an 8-character code in the Subs tab and
-  import it on another device to clone its likes, searches, and subscriptions.
+- **Portable feeds** — a dedicated Feeds tab names a profile, exports it as an
+  8-character code, lists your past exports, and imports someone else's code
+  (name included) to clone their likes, searches, and subscriptions.
 - **Likes** — persisted to a JSON store and shown in the Liked tab, which also
   feeds personalization.
 - **Comments** — server-side per-video comments with a bottom sheet UI, shared by
@@ -97,6 +99,7 @@ pick up a fresh binary (the Dockerfile always pulls `latest`).
 | `SLOW_KBPS` | `350` | Below this speed the 720p attempt is killed. `0` disables. |
 | `SLOW_GRACE_MS` | `12000` | Ignore speed readings during the first N ms of a download. |
 | `DOWNLOAD_CONCURRENCY` | `1` | Simultaneous downloads (capped at 3). |
+| `DOWNLOAD_FRAGMENTS` | `8` | Parallel DASH fragments per download (capped at 16). |
 | `DOWNLOAD_TIMEOUT_MS` | `240000` | Per-attempt download timeout. |
 | `MAX_SHORT_SECONDS` | `180` | Longer entries are rejected as "not a Short". |
 | `SEARCH_CONCURRENCY` | `3` | Max concurrent yt-dlp metadata/search processes. |
@@ -160,8 +163,10 @@ Express (src/server.js)
 | `GET` | `/api/health` | Liveness probe for Railway. |
 | `GET` | `/api/status` | Auth mode, yt-dlp version, cache/queue stats. |
 | `GET` | `/api/feed?limit=18` | Personalized feed for this client. |
-| `POST` | `/api/feed/share` | Mint a share code for this client's tastes. |
-| `GET` | `/api/feed/shared/:code` | Inspect a share code's counts. |
+| `POST` | `/api/feed/share` | Mint a named share code: `{ "name": "roblox brainrot" }`. |
+| `GET` | `/api/feed/shares` | This client's exported feeds (names + codes). |
+| `DELETE` | `/api/feed/shares/:code` | Forget an export (the code itself still works). |
+| `GET` | `/api/feed/shared/:code` | Inspect a share code's name and counts. |
 | `POST` | `/api/feed/import` | Replace this client's tastes with `{ "code": "..." }`. |
 | `GET` | `/api/search?q=...&kind=auto\|topic\|tag\|channel` | Search Shorts (exact titles first). |
 | `GET` | `/api/liked` | Liked videos. |

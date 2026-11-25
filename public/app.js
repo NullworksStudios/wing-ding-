@@ -22,7 +22,14 @@ const likedResults = $('#likedResults');
 const likedStatus = $('#likedStatus');
 const subsResults = $('#subsResults');
 const subsStatus = $('#subsStatus');
-const shareCreateBtn = $('#shareCreateBtn');
+const tabsEl = $('#tabs');
+const tabGlider = $('#tabGlider');
+const liquidGlass = $('#liquidGlass');
+const exportForm = $('#exportForm');
+const exportName = $('#exportName');
+const exportBtn = $('#exportBtn');
+const exportList = $('#exportList');
+const exportStatus = $('#exportStatus');
 const shareImportForm = $('#shareImportForm');
 const shareCodeInput = $('#shareCodeInput');
 const shareOut = $('#shareOut');
@@ -176,7 +183,25 @@ function plural(n, word) {
 
 /* ---------------- views ---------------- */
 
+function moveTabGlider() {
+  if (!tabGlider) return;
+  const active = $('.tab.is-active');
+  if (!active) return;
+  const rect = active.getBoundingClientRect();
+  const base = tabsEl.getBoundingClientRect();
+  tabGlider.style.width = `${rect.width}px`;
+  tabGlider.style.transform = `translateX(${rect.left - base.left}px)`;
+}
+
+function playLiquidGlass() {
+  if (!liquidGlass) return;
+  liquidGlass.classList.remove('run');
+  void liquidGlass.offsetWidth;
+  liquidGlass.classList.add('run');
+}
+
 function setView(view) {
+  const previous = state.view;
   state.view = view;
   document.body.dataset.view = view;
   $$('.view').forEach((section) => {
@@ -185,11 +210,14 @@ function setView(view) {
   $$('.tab').forEach((tab) => {
     tab.classList.toggle('is-active', tab.dataset.view === view);
   });
+  requestAnimationFrame(moveTabGlider);
+  if (view !== previous) playLiquidGlass();
   if (view !== 'feed') {
     pauseActive();
     if (view === 'search') loadStatus();
     if (view === 'subs') loadSubs();
     if (view === 'liked') loadLiked();
+    if (view === 'feeds') loadExports();
   }
 }
 
@@ -1137,30 +1165,84 @@ async function loadSubs() {
   }
 }
 
-/* ---------------- feed sharing ---------------- */
+/* ---------------- portable feeds ---------------- */
 
-async function createShareCode() {
-  if (!shareCreateBtn) return;
-  shareCreateBtn.disabled = true;
-  shareStatus.textContent = 'Minting a code…';
+function copyText(text, done = 'Copied') {
+  if (!text) return;
+  navigator.clipboard
+    .writeText(text)
+    .then(() => toast(done))
+    .catch(() => toast('Copy failed — select it manually', true));
+}
+
+function renderExportList(items) {
+  if (!exportList) return;
+  exportList.innerHTML = '';
+  if (!items.length) {
+    const hint = document.createElement('p');
+    hint.className = 'export-hint';
+    hint.textContent = 'No exported feeds yet. Name one above and get a code.';
+    exportList.appendChild(hint);
+    return;
+  }
+  for (const entry of items) {
+    const row = document.createElement('div');
+    row.className = 'export-row';
+    row.innerHTML = `
+      <div class="export-info">
+        <div class="export-name"></div>
+        <div class="export-meta"></div>
+      </div>
+      <code class="export-code"></code>
+      <button type="button" class="btn btn-ghost export-copy">Copy</button>
+      <button type="button" class="btn btn-ghost export-forget" aria-label="Remove from list">✕</button>
+    `;
+    row.querySelector('.export-name').textContent = entry.name || 'Unnamed feed';
+    const counts = entry.share
+      ? `${plural(entry.share.likes, 'like')} · ${plural(entry.share.subscriptions, 'subscription')}`
+      : 'code expired';
+    row.querySelector('.export-meta').textContent = `${counts} · ${timeAgo(entry.at)}`;
+    row.querySelector('.export-code').textContent = entry.code;
+    row.querySelector('.export-copy').addEventListener('click', () => copyText(entry.code, 'Code copied'));
+    row.querySelector('.export-forget').addEventListener('click', async () => {
+      row.remove();
+      await api(`/api/feed/shares/${encodeURIComponent(entry.code)}`, { method: 'DELETE' }).catch(() => {});
+    });
+    exportList.appendChild(row);
+  }
+}
+
+async function loadExports() {
+  if (!exportList) return;
   try {
-    const data = await api('/api/feed/share', { method: 'POST' });
+    const data = await api('/api/feed/shares');
+    renderExportList(data.items || []);
+  } catch (error) {
+    renderExportList([]);
+    if (exportStatus) exportStatus.textContent = error.message;
+  }
+}
+
+async function exportFeed() {
+  if (!exportForm) return;
+  const name = exportName.value.trim();
+  exportBtn.disabled = true;
+  exportStatus.textContent = 'Minting a code…';
+  try {
+    const data = await api('/api/feed/share', { method: 'POST', body: { name } });
     shareCodeValue.value = data.code;
     shareOut.hidden = false;
-    shareStatus.textContent = `Code ready · ${plural(data.counts.likes, 'like')} · ${plural(
+    exportStatus.textContent = `“${data.name}” · ${plural(data.counts.likes, 'like')} · ${plural(
       data.counts.subscriptions,
       'subscription'
     )}`;
-    try {
-      await navigator.clipboard.writeText(data.code);
-      toast('Feed code copied');
-    } catch {
-      toast('Feed code ready');
-    }
+    copyText(data.code, `Code for “${data.name}” copied`);
+    exportName.value = '';
+    loadExports();
   } catch (error) {
-    shareStatus.textContent = error.message;
+    exportStatus.textContent = error.message;
   } finally {
-    shareCreateBtn.disabled = false;
+    exportBtn.disabled = false;
   }
 }
 
@@ -1170,7 +1252,8 @@ async function importShareCode(code) {
   shareStatus.textContent = 'Importing…';
   try {
     const data = await api('/api/feed/import', { method: 'POST', body: { code: clean } });
-    shareStatus.textContent = `Imported ${plural(data.likes, 'like')} · ${plural(
+    const label = data.name ? `“${data.name}”` : 'feed';
+    shareStatus.textContent = `Imported ${label} · ${plural(data.likes, 'like')} · ${plural(
       data.subscriptions,
       'subscription'
     )} · ${plural(data.searches, 'search')}. Reloading.`;
@@ -1179,7 +1262,7 @@ async function importShareCode(code) {
     state.likedDirty = true;
     state.feedDirty = true;
     await Promise.all([loadSubs(), loadLiked()]).catch(() => {});
-    toast('Feed cloned');
+    toast(`Cloned ${label}`);
   } catch (error) {
     shareStatus.textContent = error.message;
   }
@@ -1279,21 +1362,22 @@ function bindEvents() {
     localStorage.setItem('hhl.name', commentName.value);
   });
 
-  shareCreateBtn?.addEventListener('click', createShareCode);
-  shareCopyBtn?.addEventListener('click', async () => {
+  exportForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    exportFeed();
+  });
+  shareCopyBtn?.addEventListener('click', () => {
     if (!shareCodeValue.value) return;
-    try {
-      await navigator.clipboard.writeText(shareCodeValue.value);
-      toast('Feed code copied');
-    } catch {
-      shareCodeValue.select();
-      toast('Copy the selected code');
-    }
+    copyText(shareCodeValue.value, 'Code copied');
   });
   shareImportForm?.addEventListener('submit', (event) => {
     event.preventDefault();
     importShareCode(shareCodeInput.value);
   });
+
+  window.addEventListener('resize', moveTabGlider);
+  tabsEl?.classList.add('glider-ready');
+  requestAnimationFrame(moveTabGlider);
 
   feedRetryBtn.addEventListener('click', () => loadFeed(true));
 

@@ -17,11 +17,13 @@
         <button class="brand" id="brandBtn" type="button" aria-label="Go to feed">
           <span class="brand-a">HUSS</span><span class="brand-b">HUSS</span><span class="brand-c">SLOP</span>
         </button>
-        <nav class="tabs" aria-label="Sections">
+        <nav class="tabs" id="tabs" aria-label="Sections">
+          <span class="tab-glider" id="tabGlider" aria-hidden="true"></span>
           <button class="tab is-active" type="button" data-view="feed">Feed</button>
           <button class="tab" type="button" data-view="search">Search</button>
           <button class="tab" type="button" data-view="subs">Subs</button>
           <button class="tab" type="button" data-view="liked">Liked</button>
+          <button class="tab" type="button" data-view="feeds">Feeds</button>
         </nav>
         <button class="auth-pill" id="authPill" type="button" title="YouTube auth mode">…</button>
       </header>
@@ -87,22 +89,6 @@
               <h1>Subscribed slop</h1>
               <p class="page-sub">Subscribe on any short and its channel gets pushed to the top of your For You feed.</p>
             </div>
-            <div class="share-box" id="shareBox">
-              <p class="eyebrow">Portable feed</p>
-              <p class="share-copy">Export this device's likes, searches and subscriptions as a short code, or paste a code to clone someone else's For You.</p>
-              <div class="share-actions">
-                <button class="btn btn-lime" id="shareCreateBtn" type="button">Export code</button>
-                <form class="share-import" id="shareImportForm" autocomplete="off">
-                  <input id="shareCodeInput" maxlength="20" placeholder="paste a code" aria-label="Feed code" />
-                  <button class="btn btn-ghost" type="submit">Import</button>
-                </form>
-              </div>
-              <div class="share-out" id="shareOut" hidden>
-                <input id="shareCodeValue" readonly aria-label="Your feed code" />
-                <button class="btn btn-ghost" id="shareCopyBtn" type="button">Copy</button>
-              </div>
-              <div class="statusline" id="shareStatus"></div>
-            </div>
             <div id="subsResults" class="subs" aria-live="polite"></div>
             <div class="statusline" id="subsStatus"></div>
           </div>
@@ -119,7 +105,44 @@
             <div class="statusline" id="likedStatus"></div>
           </div>
         </section>
+
+        <section class="view view-page" id="view-feeds" aria-label="Portable feeds">
+          <div class="page-inner">
+            <div class="page-head">
+              <p class="eyebrow">Export &amp; import</p>
+              <h1>Portable feeds</h1>
+              <p class="page-sub">Name a feed, get a short code, then paste that code on any device to clone the likes, searches and subscriptions behind it.</p>
+            </div>
+
+            <div class="glass-card">
+              <h2 class="card-title">Export this feed</h2>
+              <p class="share-copy">Your name travels with the code so the person importing knows what they got.</p>
+              <form class="feeds-form" id="exportForm" autocomplete="off">
+                <input id="exportName" maxlength="40" placeholder="name it — e.g. roblox brainrot" aria-label="Feed name" />
+                <button class="btn btn-lime" type="submit" id="exportBtn">Get code</button>
+              </form>
+              <div class="share-out" id="shareOut" hidden>
+                <input id="shareCodeValue" readonly aria-label="Your feed code" />
+                <button class="btn btn-ghost" id="shareCopyBtn" type="button">Copy</button>
+              </div>
+              <div class="statusline" id="exportStatus"></div>
+              <div class="export-list" id="exportList"></div>
+            </div>
+
+            <div class="glass-card">
+              <h2 class="card-title">Import a feed</h2>
+              <p class="share-copy">Paste a code to replace this device's likes, searches and subscriptions. Comments are never touched.</p>
+              <form class="feeds-form" id="shareImportForm" autocomplete="off">
+                <input id="shareCodeInput" maxlength="20" placeholder="paste a code" aria-label="Feed code" />
+                <button class="btn btn-ghost" type="submit">Import</button>
+              </form>
+              <div class="statusline" id="shareStatus"></div>
+            </div>
+          </div>
+        </section>
       </main>
+
+      <div class="liquid-glass" id="liquidGlass" aria-hidden="true"></div>
 
       <div class="sheet" id="commentsSheet" hidden>
         <div class="sheet-backdrop" data-close-sheet></div>

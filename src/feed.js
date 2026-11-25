@@ -17,14 +17,33 @@ const SEEDS = [
   'animals',
   'basketball',
   'cars',
-  'art'
+  'art',
+  'science',
+  'history',
+  'facts',
+  'asmr',
+  'skateboarding',
+  'makeup',
+  'magic',
+  'experiments'
 ];
 
-const EXPLORE_TAGS = ['ai video', 'ai slop', 'satisfying', 'cursed ai', 'random funny', 'memes', 'oddly satisfying'];
+const EXPLORE_TAGS = [
+  'ai video',
+  'ai slop',
+  'satisfying',
+  'cursed ai',
+  'random funny',
+  'memes',
+  'oddly satisfying',
+  'unexpected',
+  'weird facts'
+];
 
 const FEED_TTL_MS = 5 * 60 * 1000;
 const RECENT_VIEW_MS = 6 * 60 * 60 * 1000;
-const MAX_ITEMS_PER_CHANNEL = 4;
+// Two clips per channel keeps the feed feeling like a mix, not a channel dump.
+const MAX_ITEMS_PER_CHANNEL = 2;
 const MAX_CACHED_CLIENTS = 250;
 
 let seedCursor = 0;
@@ -55,41 +74,59 @@ function channelKey(item) {
   return '';
 }
 
+// Build the feed by taking one clip at a time from every source, rather than
+// letting the heaviest source run to the end. That guarantees the feed
+// alternates between subscriptions, related channels and topics, and the
+// per-channel cap stops one uploader from filling a stretch of the feed.
 function mergeCandidates(groups) {
   const seen = new Set();
-  const scored = [];
+  const buckets = [];
   for (const group of groups) {
     const weight = group.weight || 0;
+    const items = [];
     group.items.forEach((item, index) => {
       if (seen.has(item.id)) return;
       seen.add(item.id);
-      let score = weight * 2 - index * 0.03 + Math.random() * 0.5;
+      let score = weight * 2 - index * 0.03 + Math.random() * 0.6;
       if (item.duration != null && item.duration <= 65) score += 0.9;
       if (item.views) score += Math.min(1.8, Math.log10(item.views + 1) / 6.5);
-      scored.push({
-        ...item,
-        reason: group.reason,
-        _score: score
-      });
+      items.push({ ...item, reason: group.reason, _score: score });
     });
+    if (!items.length) continue;
+    items.sort((a, b) => b._score - a._score);
+    buckets.push({ order: weight + Math.random() * 0.35, items, cursor: 0 });
   }
-  scored.sort((a, b) => b._score - a._score);
+  buckets.sort((a, b) => b.order - a.order);
 
-  // Keep any single channel from taking over the feed. Extra items from a
-  // capped channel go to the back instead of disappearing.
   const counts = new Map();
   const front = [];
   const backlog = [];
-  for (const entry of scored) {
-    const key = channelKey(entry);
-    const used = key ? counts.get(key) || 0 : 0;
-    if (key && used >= MAX_ITEMS_PER_CHANNEL) {
-      backlog.push(entry);
-      continue;
+
+  let progressed = true;
+  let round = 0;
+  const offset = Math.floor(Math.random() * Math.max(1, buckets.length));
+  while (progressed) {
+    progressed = false;
+    for (let step = 0; step < buckets.length; step += 1) {
+      const bucket = buckets[(step + offset + round) % buckets.length];
+      while (bucket.cursor < bucket.items.length) {
+        const entry = bucket.items[bucket.cursor];
+        bucket.cursor += 1;
+        progressed = true;
+        const key = channelKey(entry);
+        const used = key ? counts.get(key) || 0 : 0;
+        if (key && used >= MAX_ITEMS_PER_CHANNEL) {
+          backlog.push(entry);
+          continue;
+        }
+        if (key) counts.set(key, used + 1);
+        front.push(entry);
+        break;
+      }
     }
-    if (key) counts.set(key, used + 1);
-    front.push(entry);
+    round += 1;
   }
+
   return [...front, ...backlog].map(({ _score, ...item }) => item);
 }
 
@@ -137,21 +174,23 @@ async function maybeExplore() {
 async function gather(store, clientId) {
   const profile = store.profile(clientId, { create: false }) || { subscriptions: [], history: [] };
   const prefs = store.preferences(clientId);
-  const subscriptions = (profile.subscriptions || []).slice(0, 3);
+  const subscriptions = (profile.subscriptions || []).slice(0, 4);
   const personalized = prefs.length > 0 || subscriptions.length > 0;
-  const tagCount = subscriptions.length ? 2 : 4;
-  const tags = prefs.length
-    ? prefs.slice(0, tagCount).map((p) => p.tag)
-    : nextSeeds(subscriptions.length ? 1 : tagCount);
+  // Always reserve one slot for a rotating seed topic, so the feed keeps
+  // surfacing new corners of YouTube instead of only replaying your habits.
+  const fresh = nextSeeds(1);
+  const prefCount = subscriptions.length ? 3 : 4;
+  const prefTags = prefs.slice(0, prefCount).map((p) => p.tag);
+  const tags = prefs.length ? [...prefTags, ...fresh] : nextSeeds(subscriptions.length ? 4 : 5);
   const weightFor = (tag) => {
     const found = prefs.find((p) => p.tag === tag);
-    return found ? Math.min(2.5, 0.6 + found.score / 12) : 0.4;
+    return found ? Math.min(2.5, 0.6 + found.score / 12) : 0.55;
   };
 
-  const primaryTags = tags.slice(0, tagCount);
+  const primaryTags = [...new Set(tags)].slice(0, 5);
   const [subscriptionResults, tagResults] = await Promise.all([
     Promise.all(subscriptions.map((sub) => channelFeedItems(sub, 6).catch(() => []))),
-    Promise.all(primaryTags.map((tag) => feedTagItems(tag, 20).catch(() => [])))
+    Promise.all(primaryTags.map((tag) => feedTagItems(tag, 18).catch(() => [])))
   ]);
 
   const relatedTags = deriveRelatedTags(subscriptionResults, subscriptions);
@@ -164,6 +203,7 @@ async function gather(store, clientId) {
   // entries can carry messy display names.
   const spotlight = subscriptions.find((sub) => sub.channelId) || subscriptions[0];
 
+  const prefSet = new Set(prefTags);
   const groups = [
     ...subscriptionResults.map((items, index) => ({
       items,
@@ -182,7 +222,11 @@ async function gather(store, clientId) {
     ...tagResults.map((items, index) => ({
       items,
       weight: weightFor(primaryTags[index]),
-      reason: personalized ? `Because you like #${primaryTags[index]}` : 'Fresh slop'
+      reason: prefSet.has(primaryTags[index])
+        ? personalized
+          ? `Because you like #${primaryTags[index]}`
+          : 'Fresh slop'
+        : `Fresh slop · #${primaryTags[index]}`
     }))
   ];
 
