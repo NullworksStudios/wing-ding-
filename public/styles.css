@@ -1059,10 +1059,22 @@ body[data-view="feeds"] .topbar {
   font-weight: 600;
 }
 
+.share-out-wrap {
+  margin-top: 12px;
+}
+
+.field-label {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 .share-out {
   display: flex;
   gap: 8px;
-  margin-top: 10px;
 }
 
 .share-out input {

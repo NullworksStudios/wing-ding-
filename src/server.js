@@ -317,13 +317,18 @@ app.get('/api/feed/shared/:code', (req, res) => {
 });
 
 app.post('/api/feed/import', (req, res) => {
-  const code = cleanText(req.body?.code, 12);
-  if (!code) return res.status(400).json({ error: 'Enter a feed code.' });
-  const share = store.getShare(code);
-  if (!share) return res.status(404).json({ error: 'That feed code does not exist.' });
+  const value = cleanText(req.body?.code, 40);
+  if (!value) return res.status(400).json({ error: 'Enter a feed code or feed name.' });
+  const share = store.findShare(value);
+  if (!share) {
+    return res.status(404).json({
+      error: `No feed named "${value}" (or code) exists on this server. Export it again from the PC that has the feed, and make sure both PCs use the same site URL.`
+    });
+  }
+  const matchedByName = share.code.toLowerCase() !== value.toLowerCase();
   const result = store.importShare(req.clientId, share);
   invalidateFeed(req.clientId);
-  res.json({ ...result, code: share.code });
+  res.json({ ...result, code: share.code, matchedByName });
 });
 
 app.get(

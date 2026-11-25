@@ -24,8 +24,10 @@ yt-dlp's `visionos` player client when no YouTube cookies are available.
 - **Per-device profiles** — every browser gets its own id (cookie) with separate
   likes, history, searches, subscriptions, and cached feed. Comments stay shared.
 - **Portable feeds** — a dedicated Feeds tab names a profile, exports it as an
-  8-character code, lists your past exports, and imports someone else's code
-  (name included) to clone their likes, searches, and subscriptions.
+  8-character code, lists your past exports, and imports by **name or code**
+  on another device to clone its likes, searches, and subscriptions. Codes and
+  names live on the server that created them, so both devices must use the same
+  site URL.
 - **Likes** — persisted to a JSON store and shown in the Liked tab, which also
   feeds personalization.
 - **Comments** — server-side per-video comments with a bottom sheet UI, shared by
@@ -167,7 +169,7 @@ Express (src/server.js)
 | `GET` | `/api/feed/shares` | This client's exported feeds (names + codes). |
 | `DELETE` | `/api/feed/shares/:code` | Forget an export (the code itself still works). |
 | `GET` | `/api/feed/shared/:code` | Inspect a share code's name and counts. |
-| `POST` | `/api/feed/import` | Replace this client's tastes with `{ "code": "..." }`. |
+| `POST` | `/api/feed/import` | Replace this client's tastes with `{ "code": "name-or-code" }`. |
 | `GET` | `/api/search?q=...&kind=auto\|topic\|tag\|channel` | Search Shorts (exact titles first). |
 | `GET` | `/api/liked` | Liked videos. |
 | `GET` / `POST` / `DELETE` | `/api/subscriptions` | List, toggle (`subscribed:false`), or remove subscriptions. |

@@ -33,6 +33,7 @@ const exportStatus = $('#exportStatus');
 const shareImportForm = $('#shareImportForm');
 const shareCodeInput = $('#shareCodeInput');
 const shareOut = $('#shareOut');
+const shareOutLabel = $('#shareOutLabel');
 const shareCodeValue = $('#shareCodeValue');
 const shareCopyBtn = $('#shareCopyBtn');
 const shareStatus = $('#shareStatus');
@@ -1232,10 +1233,11 @@ async function exportFeed() {
     const data = await api('/api/feed/share', { method: 'POST', body: { name } });
     shareCodeValue.value = data.code;
     shareOut.hidden = false;
+    shareOutLabel.textContent = `Code for “${data.name}” · type the name or code to import`;
     exportStatus.textContent = `“${data.name}” · ${plural(data.counts.likes, 'like')} · ${plural(
       data.counts.subscriptions,
       'subscription'
-    )}`;
+    )} · import with the name or ${data.code}`;
     copyText(data.code, `Code for “${data.name}” copied`);
     exportName.value = '';
     loadExports();
@@ -1247,13 +1249,14 @@ async function exportFeed() {
 }
 
 async function importShareCode(code) {
-  const clean = String(code || '').trim().toLowerCase();
+  const clean = String(code || '').trim();
   if (!clean) return;
   shareStatus.textContent = 'Importing…';
   try {
     const data = await api('/api/feed/import', { method: 'POST', body: { code: clean } });
     const label = data.name ? `“${data.name}”` : 'feed';
-    shareStatus.textContent = `Imported ${label} · ${plural(data.likes, 'like')} · ${plural(
+    const how = data.matchedByName ? ' by name' : '';
+    shareStatus.textContent = `Imported${how} ${label} · ${plural(data.likes, 'like')} · ${plural(
       data.subscriptions,
       'subscription'
     )} · ${plural(data.searches, 'search')}. Reloading.`;

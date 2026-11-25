@@ -479,6 +479,21 @@ export class Store {
     return this.data.shares[key] || null;
   }
 
+  // Imports accept either the 8-character code or the feed name given at
+  // export time. Names are easier to read out loud and retype on another PC.
+  findShare(value) {
+    const key = String(value || '').trim().toLowerCase();
+    if (!key) return null;
+    const byCode = this.data.shares[key];
+    if (byCode) return byCode;
+    const named = Object.values(this.data.shares).filter(
+      (share) => String(share.name || '').trim().toLowerCase() === key
+    );
+    if (!named.length) return null;
+    named.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return named[0];
+  }
+
   importShare(clientId, share) {
     const profile = this.profile(clientId);
     if (!profile || !share?.snapshot) return { imported: false };

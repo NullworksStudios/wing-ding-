@@ -111,19 +111,22 @@
             <div class="page-head">
               <p class="eyebrow">Export &amp; import</p>
               <h1>Portable feeds</h1>
-              <p class="page-sub">Name a feed, get a short code, then paste that code on any device to clone the likes, searches and subscriptions behind it.</p>
+              <p class="page-sub">Name a feed, get a short code, then type that name (or its code) on any device to clone the likes, searches and subscriptions behind it.</p>
             </div>
 
             <div class="glass-card">
               <h2 class="card-title">Export this feed</h2>
-              <p class="share-copy">Your name travels with the code so the person importing knows what they got.</p>
+              <p class="share-copy">Pick a name you can retype on the other PC. You also get a code — the name or the code imports the same feed.</p>
               <form class="feeds-form" id="exportForm" autocomplete="off">
-                <input id="exportName" maxlength="40" placeholder="name it — e.g. roblox brainrot" aria-label="Feed name" />
+                <input id="exportName" maxlength="40" placeholder="feed name — e.g. roblox brainrot" aria-label="Feed name" />
                 <button class="btn btn-lime" type="submit" id="exportBtn">Get code</button>
               </form>
-              <div class="share-out" id="shareOut" hidden>
-                <input id="shareCodeValue" readonly aria-label="Your feed code" />
-                <button class="btn btn-ghost" id="shareCopyBtn" type="button">Copy</button>
+              <div class="share-out-wrap" id="shareOut" hidden>
+                <p class="field-label" id="shareOutLabel">Feed code</p>
+                <div class="share-out">
+                  <input id="shareCodeValue" readonly aria-label="Your feed code" />
+                  <button class="btn btn-ghost" id="shareCopyBtn" type="button">Copy</button>
+                </div>
               </div>
               <div class="statusline" id="exportStatus"></div>
               <div class="export-list" id="exportList"></div>
@@ -131,9 +134,9 @@
 
             <div class="glass-card">
               <h2 class="card-title">Import a feed</h2>
-              <p class="share-copy">Paste a code to replace this device's likes, searches and subscriptions. Comments are never touched.</p>
+              <p class="share-copy">Type the feed name from the other PC, or paste its code. This replaces this device's likes, searches and subscriptions. Comments are never touched.</p>
               <form class="feeds-form" id="shareImportForm" autocomplete="off">
-                <input id="shareCodeInput" maxlength="20" placeholder="paste a code" aria-label="Feed code" />
+                <input id="shareCodeInput" maxlength="40" placeholder="feed name or code" aria-label="Feed name or code" />
                 <button class="btn btn-ghost" type="submit">Import</button>
               </form>
               <div class="statusline" id="shareStatus"></div>
