@@ -9,8 +9,11 @@ import {
   CACHE_MAX_MB,
   MAX_HEIGHT,
   FALLBACK_HEIGHT,
+  MONGODB_URI,
+  MONGODB_DB,
   ensureDirs,
-  getAuth
+  getAuth,
+  dataDurability
 } from './config.js';
 import { Store } from './store.js';
 import { cleanText, extractVideoId, VIDEO_ID_RE } from './util.js';
@@ -21,7 +24,11 @@ import { buildFeed, invalidateFeed } from './feed.js';
 import { enrichItems } from './enrich.js';
 
 ensureDirs();
-const store = new Store(path.join(DATA_DIR, 'db.json'));
+const store = new Store(path.join(DATA_DIR, 'db.json'), {
+  mongoUri: MONGODB_URI,
+  mongoDb: MONGODB_DB
+});
+await store.init();
 const auth = getAuth();
 startDownloads();
 startIdleWatcher();
@@ -162,7 +169,13 @@ app.post('/api/ping', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({ ok: true, idle: isIdle(), uptime: Math.round(process.uptime()) });
+  res.json({
+    ok: true,
+    idle: isIdle(),
+    storage: store.storage,
+    shares: Object.keys(store.data.shares).length,
+    uptime: Math.round(process.uptime())
+  });
 });
 
 app.get(
@@ -170,6 +183,7 @@ app.get(
   wrap(async (req, res) => {
     const info = serverInfo();
     const ytdlp = versionPromise ? await versionPromise : null;
+    const disks = dataDurability();
     res.json({
       ...info,
       ytdlp,
@@ -177,6 +191,12 @@ app.get(
       queue: queueInfo(),
       stats: store.stats(req.clientId),
       recentSearches: store.recentSearches(req.clientId, 8),
+      persistence: {
+        storage: store.storage,
+        dataDir: DATA_DIR,
+        mount: disks.mount,
+        durable: store.storage === 'mongo' || Boolean(disks.durable)
+      },
       uptime: Math.round(process.uptime())
     });
   })
@@ -301,9 +321,14 @@ app.delete('/api/feed/shares/:code', (req, res) => {
   res.json(store.removeExport(req.clientId, String(req.params.code || '').toLowerCase()));
 });
 
+app.get('/api/feed/shared', (req, res) => {
+  const items = store.allShares(100);
+  res.json({ items, count: items.length });
+});
+
 app.get('/api/feed/shared/:code', (req, res) => {
-  const share = store.getShare(req.params.code);
-  if (!share) return res.status(404).json({ error: 'That feed code does not exist.' });
+  const share = store.findShare(req.params.code);
+  if (!share) return res.status(404).json({ error: 'That feed code or name does not exist on this server.' });
   res.json({
     code: share.code,
     name: share.name || '',
@@ -321,8 +346,9 @@ app.post('/api/feed/import', (req, res) => {
   if (!value) return res.status(400).json({ error: 'Enter a feed code or feed name.' });
   const share = store.findShare(value);
   if (!share) {
+    const total = Object.keys(store.data.shares).length;
     return res.status(404).json({
-      error: `No feed named "${value}" (or code) exists on this server. Export it again from the PC that has the feed, and make sure both PCs use the same site URL.`
+      error: `No feed named "${value}" (or code) exists on this server (${total} saved). Export it again from the PC that has the feed, and make sure both PCs use the same site URL.`
     });
   }
   const matchedByName = share.code.toLowerCase() !== value.toLowerCase();
@@ -450,10 +476,13 @@ const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[auth] mode=${auth.mode}${auth.client ? ` client=${auth.client}` : ''}`);
 });
 
-function shutdown(signal) {
+async function shutdown(signal) {
   console.log(`[server] ${signal} received, shutting down.`);
   stopDownloads();
   stopIdleWatcher();
+  try {
+    await store.close();
+  } catch {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 8_000).unref();
 }

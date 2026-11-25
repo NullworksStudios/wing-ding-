@@ -30,6 +30,7 @@ const exportName = $('#exportName');
 const exportBtn = $('#exportBtn');
 const exportList = $('#exportList');
 const exportStatus = $('#exportStatus');
+const storageNote = $('#storageNote');
 const shareImportForm = $('#shareImportForm');
 const shareCodeInput = $('#shareCodeInput');
 const shareOut = $('#shareOut');
@@ -959,9 +960,32 @@ async function loadStatus() {
         : `No cookies found — using yt-dlp player_client=${data.playerClient || 'visionOS'}`;
     updateRecentUI();
     renderEngineStatus(state.lastSearchMeta || '');
+    renderStorageNote(data.persistence);
   } catch {
     authPill.textContent = 'offline';
     authPill.dataset.mode = 'error';
+  }
+}
+
+// Feed codes only exist on the server that minted them, and a Railway
+// redeploy wipes anything not stored in Mongo or on a mounted volume.
+function renderStorageNote(persistence) {
+  if (!storageNote) return;
+  if (!persistence) {
+    storageNote.hidden = true;
+    return;
+  }
+  storageNote.hidden = false;
+  if (persistence.storage === 'mongo') {
+    storageNote.dataset.state = 'ok';
+    storageNote.textContent = 'Feed codes are saved in MongoDB, so they survive redeploys.';
+  } else if (persistence.durable) {
+    storageNote.dataset.state = 'ok';
+    storageNote.textContent = `Feed codes are saved on a mounted disk (${persistence.dataDir}).`;
+  } else {
+    storageNote.dataset.state = 'warn';
+    storageNote.textContent =
+      'No database or mounted disk detected — feed codes disappear when the server redeploys. Add the MongoDB plugin (MONGO_URL is auto-detected) to keep them.';
   }
 }
 

@@ -102,42 +102,90 @@ function shareCode() {
 }
 
 export class Store {
-  constructor(file) {
+  constructor(file, { mongoUri = '', mongoDb = 'huss_huss_slop' } = {}) {
     this.file = file;
+    this.mongoUri = String(mongoUri || '').trim();
+    this.mongoDb = String(mongoDb || '').trim() || 'huss_huss_slop';
+    this.storage = 'json';
+    this.client = null;
+    this.collection = null;
+    this.mongoTimer = null;
+    this.mongoChain = Promise.resolve();
     this.revision = 1;
     this.data = emptyData();
     this.load();
   }
 
+  normalize(raw) {
+    const parsed = raw && typeof raw === 'object' ? raw : {};
+    const legacy = {
+      likes: Array.isArray(parsed.likes) ? parsed.likes : [],
+      history: Array.isArray(parsed.history) ? parsed.history : [],
+      searches: Array.isArray(parsed.searches) ? parsed.searches : [],
+      subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : []
+    };
+    const data = { ...emptyData(), ...parsed };
+    if (!data.clients || typeof data.clients !== 'object') data.clients = {};
+    if (!data.comments || typeof data.comments !== 'object') data.comments = {};
+    if (!data.videos || typeof data.videos !== 'object') data.videos = {};
+    if (!data.shares || typeof data.shares !== 'object') data.shares = {};
+    data.primaryAssigned = Boolean(data.primaryAssigned);
+
+    // Older versions kept a single global profile. Move it intact to the
+    // "default" profile so the existing owner keeps their likes and subs.
+    if (!data.clients.default) {
+      data.clients.default = { ...emptyProfile(), ...legacy };
+    }
+    delete data.likes;
+    delete data.history;
+    delete data.searches;
+    delete data.subscriptions;
+    return data;
+  }
+
   load() {
     try {
-      const raw = fs.readFileSync(this.file, 'utf8');
-      const parsed = JSON.parse(raw);
-      const legacy = {
-        likes: Array.isArray(parsed.likes) ? parsed.likes : [],
-        history: Array.isArray(parsed.history) ? parsed.history : [],
-        searches: Array.isArray(parsed.searches) ? parsed.searches : [],
-        subscriptions: Array.isArray(parsed.subscriptions) ? parsed.subscriptions : []
-      };
-      this.data = { ...emptyData(), ...parsed };
-      if (!this.data.clients || typeof this.data.clients !== 'object') this.data.clients = {};
-      if (!this.data.comments || typeof this.data.comments !== 'object') this.data.comments = {};
-      if (!this.data.videos || typeof this.data.videos !== 'object') this.data.videos = {};
-      if (!this.data.shares || typeof this.data.shares !== 'object') this.data.shares = {};
-      this.data.primaryAssigned = Boolean(this.data.primaryAssigned);
-
-      // Older versions kept a single global profile. Move it intact to the
-      // "default" profile so the existing owner keeps their likes and subs.
-      if (!this.data.clients.default) {
-        this.data.clients.default = { ...emptyProfile(), ...legacy };
-      }
-      delete this.data.likes;
-      delete this.data.history;
-      delete this.data.searches;
-      delete this.data.subscriptions;
+      this.data = this.normalize(JSON.parse(fs.readFileSync(this.file, 'utf8')));
     } catch (error) {
       if (error.code !== 'ENOENT') console.warn('[store] Could not read database, starting fresh:', error.message);
     }
+  }
+
+  // Mongo is the durable backing store on Railway; the local JSON file is
+  // still written as a mirror so local dev works with no database.
+  async init() {
+    if (!this.mongoUri) {
+      console.log('[store] Persistence: local JSON (set MONGODB_URI to survive redeploys)');
+      return this;
+    }
+    try {
+      const { MongoClient } = await import('mongodb');
+      this.client = new MongoClient(this.mongoUri, {
+        serverSelectionTimeoutMS: 8000,
+        connectTimeoutMS: 8000
+      });
+      await this.client.connect();
+      this.collection = this.client.db(this.mongoDb).collection('state');
+      const doc = await this.collection.findOne({ _id: 'state' });
+      this.storage = 'mongo';
+      if (doc && doc.data) {
+        this.data = this.normalize(doc.data);
+        console.log('[store] Persistence: MongoDB (loaded saved state)');
+      } else {
+        await this.flushMongo();
+        console.log('[store] Persistence: MongoDB (seeded from local JSON)');
+      }
+      this.save();
+    } catch (error) {
+      this.storage = 'json';
+      console.warn('[store] MongoDB unavailable, using local JSON:', error.message);
+      try {
+        await this.client?.close();
+      } catch {}
+      this.client = null;
+      this.collection = null;
+    }
+    return this;
   }
 
   save() {
@@ -150,6 +198,46 @@ export class Store {
     } catch (error) {
       console.error('[store] Save failed:', error.message);
     }
+    this.scheduleMongo();
+  }
+
+  scheduleMongo() {
+    if (!this.collection) return;
+    clearTimeout(this.mongoTimer);
+    this.mongoTimer = setTimeout(() => {
+      this.mongoTimer = null;
+      this.flushMongo();
+    }, 400);
+    this.mongoTimer.unref?.();
+  }
+
+  flushMongo() {
+    if (!this.collection) return Promise.resolve();
+    const snapshot = structuredClone(this.data);
+    const write = this.mongoChain
+      .then(() =>
+        this.collection.replaceOne(
+          { _id: 'state' },
+          { _id: 'state', data: snapshot, updatedAt: new Date() },
+          { upsert: true }
+        )
+      )
+      .catch((error) => {
+        console.warn('[store] MongoDB write failed:', error.message);
+      });
+    this.mongoChain = write;
+    return write;
+  }
+
+  async close() {
+    if (this.mongoTimer) {
+      clearTimeout(this.mongoTimer);
+      this.mongoTimer = null;
+    }
+    await this.flushMongo();
+    try {
+      await this.client?.close();
+    } catch {}
   }
 
   pruneClients(clients) {
@@ -477,6 +565,22 @@ export class Store {
     const key = String(code || '').trim().toLowerCase();
     if (!key) return null;
     return this.data.shares[key] || null;
+  }
+
+  allShares(limit = 100) {
+    return Object.values(this.data.shares)
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+      .slice(0, limit)
+      .map((share) => ({
+        code: share.code,
+        name: share.name || '',
+        createdAt: share.createdAt,
+        counts: {
+          likes: share.snapshot.likes.length,
+          searches: share.snapshot.searches.length,
+          subscriptions: share.snapshot.subscriptions.length
+        }
+      }));
   }
 
   // Imports accept either the 8-character code or the feed name given at

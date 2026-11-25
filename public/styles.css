@@ -1157,6 +1157,29 @@ body[data-view="feeds"] .topbar {
   font-size: 10.5px;
 }
 
+.storage-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.storage-note[data-state="warn"] {
+  border-color: rgba(255, 176, 66, 0.4);
+  background: rgba(255, 176, 66, 0.08);
+  color: #ffce8a;
+}
+
+.storage-note[data-state="ok"] {
+  border-color: rgba(215, 255, 63, 0.28);
+  background: rgba(215, 255, 63, 0.06);
+  color: #cfe98a;
+}
+
 .sub-avatar {
   flex: 0 0 42px;
   width: 42px;

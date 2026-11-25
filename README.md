@@ -70,11 +70,15 @@ Huss Huss Slop listening on http://0.0.0.0:8080
 2. New Railway project → **Deploy from GitHub repo**.
 3. Railway detects `railway.json` and builds the `Dockerfile` (multi-arch: amd64
    and arm64 are both handled).
-4. *(Recommended)* Add a **Volume** mounted at `/app/data`. Without it, likes,
-   comments, and the video cache are wiped on every redeploy.
-5. *(Optional but recommended)* Add `YT_COOKIE` as a variable. Without cookies,
+4. *(Recommended)* Add the **MongoDB** plugin. Railway injects `MONGO_URL`, which
+   the app auto-detects, so likes, comments, subscriptions and **feed share codes**
+   survive redeploys. Without Mongo, mount a **Volume** at `/app/data` instead —
+   otherwise all state (and any export code you made) is wiped on every deploy.
+5. *(Recommended)* Mount a **Volume** at `/app/data` for the video cache (the free
+   500 MB volume holds roughly 450 MB of MP4s plus `db.json`).
+6. *(Optional but recommended)* Add `YT_COOKIE` as a variable. Without cookies,
    datacenter IPs may be asked to "sign in to confirm you're not a bot".
-6. Healthcheck is `/api/health` and the app listens on Railway's injected `PORT`.
+7. Healthcheck is `/api/health` and the app listens on Railway's injected `PORT`.
 
 The image installs a self-contained `yt-dlp_linux` binary (no Python), plus
 `ffmpeg` and `ca-certificates`. `yt-dlp` moves fast — redeploy periodically to
@@ -83,8 +87,8 @@ pick up a fresh binary (the Dockerfile always pulls `latest`).
 ### Hardware notes
 
 - Keep `DOWNLOAD_CONCURRENCY=1` on a 1 GB / 2 vCPU box.
-- `CACHE_MAX_MB=1400` is roughly a third of a small Railway volume. Lower it if
-  you have less disk; raise it if you have more.
+- `CACHE_MAX_MB=450` leaves headroom on Railway's free 500 MB volume for
+  `db.json` and temp files. Raise it if you mounted a bigger disk.
 - Two videos downloading at 720p can spike memory. If you see restarts, lower
   `MAX_HEIGHT` to `480` or `CACHE_MAX_MB` to keep less on disk.
 
@@ -93,9 +97,11 @@ pick up a fresh binary (the Dockerfile always pulls `latest`).
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP port. Railway injects this. |
-| `DATA_DIR` | `./data` | JSON database + default cache location. Mount your volume here. |
+| `DATA_DIR` | `./data` | JSON mirror + default cache location. Mount your volume here. |
 | `CACHE_DIR` | `$DATA_DIR/cache` | Where MP4s are stored. |
-| `CACHE_MAX_MB` | `1400` | Max size of the MP4 cache; LRU eviction beyond this. |
+| `CACHE_MAX_MB` | `450` | Max size of the MP4 cache; LRU eviction beyond this. |
+| `MONGODB_URI` | *(blank)* | Mongo connection string. Railway's plugin sets `MONGO_URL`, which is also read. |
+| `MONGODB_DB` | `huss_huss_slop` | Database name used inside Mongo. |
 | `MAX_HEIGHT` | `720` | Preferred vertical resolution. |
 | `FALLBACK_HEIGHT` | `480` | Resolution used when the link is slow. |
 | `SLOW_KBPS` | `350` | Below this speed the 720p attempt is killed. `0` disables. |
@@ -215,7 +221,7 @@ src/
   feed.js       per-client personalization, subscriptions, related tags, wildcard
   enrich.js     oEmbed channel metadata for items yt-dlp left blank
   idle.js       pauses new downloads when nobody is watching
-  store.js      JSON persistence (clients, likes, history, searches, subs, shares)
+  store.js      persistence (Mongo or JSON): clients, likes, history, searches, subs, shares
   util.js       ids, text cleanup, tag extraction
 public/
   index.html    app shell (feed, search, subs, liked, comments)
@@ -232,7 +238,12 @@ acceptable for a given video or region is between you and YouTube's Terms of
 Service. Don't run a public, high-traffic instance, and don't redistribute
 downloaded content. Use cookies only from an account you control.
 
-Everything is stored locally in `$DATA_DIR/db.json`: per-device profiles (likes,
-history, search history, subscriptions), share codes, and the global comment
-threads and video metadata. There are no accounts and no external database. Mount
-a volume at `/app/data` or all of it disappears on the next deploy.
+There are no accounts. State lives in MongoDB when `MONGODB_URI` (or Railway's
+`MONGO_URL`) is set — per-device profiles (likes, history, search history,
+subscriptions), share codes, global comment threads and video metadata all go
+into a single `state` document. That means an export code made on Railway still
+works after a redeploy, and from any other browser.
+
+With no database configured the app writes `$DATA_DIR/db.json` instead. In that
+mode you must mount a volume at `/app/data`, or likes, comments and share codes
+disappear on the next deploy (the Feeds tab warns you when this is the case).

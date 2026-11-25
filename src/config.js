@@ -13,7 +13,7 @@ const positive = (value, fallback) => {
 export const PORT = positive(process.env.PORT, 8080);
 export const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT, 'data'));
 export const CACHE_DIR = path.resolve(process.env.CACHE_DIR || path.join(DATA_DIR, 'cache'));
-export const CACHE_MAX_MB = positive(process.env.CACHE_MAX_MB, 1400);
+export const CACHE_MAX_MB = positive(process.env.CACHE_MAX_MB, 450);
 export const MAX_HEIGHT = Math.round(positive(process.env.MAX_HEIGHT, 720));
 export const FALLBACK_HEIGHT = Math.round(positive(process.env.FALLBACK_HEIGHT, 480));
 export const SLOW_KBPS = positive(process.env.SLOW_KBPS, 350);
@@ -27,6 +27,12 @@ export const YT_PLAYER_CLIENT = process.env.YT_PLAYER_CLIENT || 'visionos';
 // Seconds without a visitor before background work pauses. 0 disables idling.
 export const IDLE_AFTER_MS = Math.max(0, Number(process.env.IDLE_AFTER_SECONDS ?? 120) || 0) * 1000;
 export const MAX_SHORT_SECONDS = positive(process.env.MAX_SHORT_SECONDS, 180);
+
+// MongoDB keeps profiles, comments and share codes across redeploys. Railway's
+// Mongo plugin exposes MONGO_URL; other hosts use MONGODB_URI / MONGO_URI.
+export const MONGODB_URI =
+  process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || '';
+export const MONGODB_DB = process.env.MONGODB_DB || 'huss_huss_slop';
 
 let cachedAuth = null;
 
@@ -99,4 +105,29 @@ export function getAuth() {
 export function ensureDirs() {
   fs.mkdirSync(DATA_DIR, { recursive: true });
   fs.mkdirSync(CACHE_DIR, { recursive: true });
+}
+
+// Railway only keeps $DATA_DIR across deploys when a volume is mounted there.
+// On Linux we can inspect /proc/mounts to tell whether the data directory sits
+// on its own mount instead of the container's ephemeral root filesystem.
+export function dataDurability() {
+  if (process.platform !== 'linux') return { path: DATA_DIR, durable: null, mount: null };
+  try {
+    const mounts = fs
+      .readFileSync('/proc/mounts', 'utf8')
+      .split('\n')
+      .map((line) => line.split(' ')[1])
+      .filter(Boolean)
+      .map((mount) => mount.replace(/\\040/g, ' '));
+    let best = '';
+    for (const mount of mounts) {
+      const prefix = mount === '/' ? '/' : mount.replace(/\/$/, '');
+      if (DATA_DIR === prefix || DATA_DIR.startsWith(prefix === '/' ? '/' : `${prefix}/`)) {
+        if (prefix.length > best.length) best = prefix;
+      }
+    }
+    return { path: DATA_DIR, durable: Boolean(best) && best !== '/', mount: best || null };
+  } catch {
+    return { path: DATA_DIR, durable: null, mount: null };
+  }
 }
