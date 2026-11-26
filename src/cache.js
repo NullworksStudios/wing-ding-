@@ -8,6 +8,11 @@ import { REDIS_URL } from './config.js';
 let client = null;
 let ready = false;
 let connecting = null;
+let retryTimer = null;
+// How long to keep an unreachable Redis from blocking boot. On a tiny Railway
+// box a bad host/IPv6-only URL can hang `connect()` far past its own timeout,
+// and the app must never wait for a cache.
+const CONNECT_TIMEOUT_MS = 4_000;
 
 const local = new Map();
 
@@ -39,36 +44,55 @@ export async function initCache() {
     return { mode: 'memory' };
   }
   if (connecting) return connecting;
+  if (client) return { mode: cacheMode() };
   connecting = (async () => {
+    let candidate = null;
     try {
       const { createClient } = await import('redis');
-      client = createClient({
+      candidate = createClient({
         url: REDIS_URL,
         socket: {
-          connectTimeout: 8_000,
+          connectTimeout: 3_000,
           reconnectStrategy: (retries) => Math.min(250 * (retries + 1), 3_000)
         }
       });
-      client.on('error', (error) => {
-        if (ready) console.warn('[cache] Redis error:', error.message);
-      });
-      client.on('ready', () => {
+      candidate.on('ready', () => {
         ready = true;
       });
-      client.on('end', () => {
+      candidate.on('end', () => {
         ready = false;
       });
-      await client.connect();
+      candidate.on('error', (error) => {
+        // Silence connect retries while we are still deciding whether to keep
+        // this client at all; after boot a real outage is worth a warning.
+        if (ready) console.warn('[cache] Redis error:', error.message);
+      });
+      let timer = null;
+      const guard = new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('connect timed out')), CONNECT_TIMEOUT_MS);
+        timer.unref?.();
+      });
+      try {
+        await Promise.race([candidate.connect(), guard]);
+      } finally {
+        clearTimeout(timer);
+      }
       ready = true;
+      client = candidate;
+      if (retryTimer) {
+        clearInterval(retryTimer);
+        retryTimer = null;
+      }
       console.log('[cache] Redis connected');
       return { mode: 'redis' };
     } catch (error) {
       console.warn('[cache] Redis unavailable, using in-process cache:', error.message);
       try {
-        await client?.disconnect();
+        await candidate?.disconnect();
       } catch {}
       client = null;
       ready = false;
+      scheduleRedisRetry();
       return { mode: 'memory' };
     }
   })();
@@ -77,6 +101,21 @@ export async function initCache() {
 
 export function cacheMode() {
   return ready ? 'redis' : 'memory';
+}
+
+// A failed boot attempt should not be permanent: retry quietly in the
+// background until it answers, then report "redis" again.
+function scheduleRedisRetry() {
+  if (retryTimer) return;
+  retryTimer = setInterval(() => {
+    if (ready) {
+      clearInterval(retryTimer);
+      retryTimer = null;
+      return;
+    }
+    initCache().catch(() => {});
+  }, 60_000);
+  retryTimer.unref?.();
 }
 
 export async function cacheGet(key) {
@@ -120,8 +159,12 @@ export async function cacheDelPrefix(prefix) {
 }
 
 export async function cacheClose() {
+  if (retryTimer) {
+    clearInterval(retryTimer);
+    retryTimer = null;
+  }
   try {
-    await client?.quit();
+    await client?.disconnect();
   } catch {}
   client = null;
   ready = false;
