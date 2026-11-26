@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import {
   PORT,
@@ -11,6 +11,7 @@ import {
   FALLBACK_HEIGHT,
   MONGODB_URI,
   MONGODB_DB,
+  ADMIN_TOKEN,
   ensureDirs,
   getAuth,
   dataDurability
@@ -36,7 +37,7 @@ startIdleWatcher();
 const app = express();
 app.set('trust proxy', true);
 app.disable('x-powered-by');
-app.use(express.json({ limit: '200kb' }));
+app.use(express.json({ limit: '1mb' }));
 
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -122,6 +123,52 @@ function clientKey(req) {
 }
 
 const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+/* ---------------- live viewers + admin banners ---------------- */
+
+const liveClients = new Set();
+const ADMIN_PASSWORD = ADMIN_TOKEN || randomBytes(9).toString('hex');
+if (!ADMIN_TOKEN) {
+  console.log(`[admin] ADMIN_TOKEN is not set. This boot's admin password: ${ADMIN_PASSWORD}`);
+}
+
+function safeEqual(a, b) {
+  const left = Buffer.from(String(a || ''));
+  const right = Buffer.from(String(b || ''));
+  if (!left.length || left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
+function adminTokenFrom(req) {
+  return (
+    req.get('x-admin-token') ||
+    req.query?.token ||
+    (req.body && typeof req.body === 'object' ? req.body.token : '') ||
+    ''
+  );
+}
+
+function requireAdmin(req, res, next) {
+  if (!safeEqual(adminTokenFrom(req), ADMIN_PASSWORD)) {
+    return res.status(401).json({ error: 'Wrong admin password.' });
+  }
+  next();
+}
+
+function broadcast(event, payload) {
+  const frame = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
+  for (const client of liveClients) {
+    try {
+      client.write(frame);
+    } catch {
+      liveClients.delete(client);
+    }
+  }
+}
+
+function pushViewers() {
+  broadcast('viewers', { count: liveClients.size });
+}
 
 function validVideoId(req, res) {
   const id = extractVideoId(req.params.id);
@@ -355,6 +402,74 @@ app.post('/api/feed/import', (req, res) => {
   const result = store.importShare(req.clientId, share);
   invalidateFeed(req.clientId);
   res.json({ ...result, code: share.code, matchedByName });
+});
+
+app.get('/api/market', (req, res) => {
+  const items = store.marketPosts(req.clientId);
+  res.json({ items, count: items.length });
+});
+
+app.post('/api/market', (req, res) => {
+  if (!allow(`market:${clientKey(req)}`, 12, 60_000)) {
+    return res.status(429).json({ error: 'Posting too fast — wait a minute.' });
+  }
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const result = store.addMarketPost(req.clientId, {
+    name: body.name,
+    description: body.description,
+    image: body.image
+  });
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(result);
+});
+
+app.delete('/api/market/:id', (req, res) => {
+  const result = store.removeMarketPost(req.clientId, String(req.params.id || ''));
+  if (result.error) return res.status(400).json({ error: result.error });
+  res.json(result);
+});
+
+app.get('/api/live', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no'
+  });
+  res.write('retry: 5000\n\n');
+  liveClients.add(res);
+  res.write(`event: viewers\ndata: ${JSON.stringify({ count: liveClients.size })}\n\n`);
+  pushViewers();
+  const beat = setInterval(() => {
+    try {
+      res.write(': ping\n\n');
+    } catch {
+      clearInterval(beat);
+    }
+  }, 25_000);
+  beat.unref?.();
+  const drop = () => {
+    clearInterval(beat);
+    if (liveClients.delete(res)) pushViewers();
+  };
+  req.on('close', drop);
+  req.on('error', drop);
+});
+
+app.get('/api/admin/session', requireAdmin, (req, res) => {
+  res.json({ ok: true, viewers: liveClients.size });
+});
+
+app.post('/api/admin/banner', requireAdmin, (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const text = cleanText(body.text, 180);
+  if (!text) return res.status(400).json({ error: 'Banner text is empty.' });
+  const tones = ['lime', 'info', 'warn', 'danger'];
+  const tone = tones.includes(body.tone) ? body.tone : 'lime';
+  const seconds = Math.max(3, Math.min(30, Number(body.seconds) || 8));
+  const banner = { text, tone, seconds, at: Date.now(), id: randomBytes(4).toString('hex') };
+  broadcast('banner', banner);
+  res.json({ sent: true, viewers: liveClients.size, banner });
 });
 
 app.get(

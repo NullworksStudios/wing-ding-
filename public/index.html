@@ -25,6 +25,7 @@
           <button class="tab" type="button" data-view="liked">Liked</button>
           <button class="tab" type="button" data-view="feeds">Feeds</button>
         </nav>
+        <button class="admin-btn" id="adminBtn" type="button" title="Admin · live banners" aria-label="Admin panel">⚙</button>
         <button class="auth-pill" id="authPill" type="button" title="YouTube auth mode">…</button>
       </header>
 
@@ -143,6 +144,37 @@
               </form>
               <div class="statusline" id="shareStatus"></div>
             </div>
+
+            <div class="glass-card market-card">
+              <div class="market-head">
+                <div>
+                  <h2 class="card-title">Feedbook Marketplace</h2>
+                  <p class="share-copy">Post your feed with a name, a blurb and a cover. Anyone can hit <strong>Load</strong> to swap it into their own For You.</p>
+                </div>
+                <span class="market-count" id="marketCount"></span>
+              </div>
+
+              <form class="market-form" id="marketForm" autocomplete="off">
+                <div class="market-fields">
+                  <input id="marketName" maxlength="40" placeholder="feed name" aria-label="Feed name" />
+                  <input id="marketDesc" maxlength="240" placeholder="what's in it? (one line)" aria-label="Feed description" />
+                  <label class="market-cover">
+                    <input type="file" id="marketImageFile" accept="image/*" hidden />
+                    <span id="marketCoverLabel">＋ cover image</span>
+                  </label>
+                </div>
+                <div class="market-cover-preview" id="marketCoverPreview" hidden>
+                  <img id="marketCoverImg" alt="" />
+                  <button type="button" class="btn btn-ghost" id="marketCoverClear">Remove</button>
+                </div>
+                <div class="market-actions">
+                  <button class="btn btn-lime" type="submit" id="marketPostBtn">Post to feedbook</button>
+                  <span class="market-status" id="marketStatus"></span>
+                </div>
+              </form>
+
+              <div class="market-grid" id="marketGrid"></div>
+            </div>
           </div>
         </section>
       </main>
@@ -162,6 +194,44 @@
             <input id="commentName" maxlength="32" placeholder="name" aria-label="Your name" />
             <input id="commentText" maxlength="600" placeholder="say something sloppy…" aria-label="Comment" />
             <button type="submit" class="icon-btn send" aria-label="Post comment">↑</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="live-banner" id="liveBanner" role="status" aria-live="assertive" hidden>
+        <span class="live-banner-dot" aria-hidden="true"></span>
+        <span class="live-banner-text" id="liveBannerText"></span>
+      </div>
+
+      <div class="admin-sheet" id="adminSheet" hidden>
+        <div class="admin-backdrop" data-close-admin></div>
+        <div class="admin-panel" role="dialog" aria-modal="true" aria-label="Admin">
+          <div class="sheet-head">
+            <h2>Live banners <span class="admin-live" id="adminLive">0 live</span></h2>
+            <button type="button" class="icon-btn" data-close-admin aria-label="Close admin">✕</button>
+          </div>
+          <form class="admin-form" id="adminForm" autocomplete="off">
+            <label class="field-label" for="adminToken">Admin password</label>
+            <input id="adminToken" type="password" maxlength="80" placeholder="from ADMIN_TOKEN or the boot log" />
+            <label class="field-label" for="adminText">Banner text</label>
+            <input id="adminText" maxlength="180" placeholder="e.g. SLOP HOUR STARTS NOW" />
+            <div class="admin-row">
+              <select id="adminTone" aria-label="Banner colour">
+                <option value="lime">Lime</option>
+                <option value="info">Blue</option>
+                <option value="warn">Amber</option>
+                <option value="danger">Red</option>
+              </select>
+              <select id="adminSeconds" aria-label="Banner duration">
+                <option value="5">5s</option>
+                <option value="8" selected>8s</option>
+                <option value="12">12s</option>
+                <option value="20">20s</option>
+                <option value="30">30s</option>
+              </select>
+              <button class="btn btn-lime" type="submit" id="adminSend">Send live</button>
+            </div>
+            <p class="admin-status" id="adminStatus"></p>
           </form>
         </div>
       </div>

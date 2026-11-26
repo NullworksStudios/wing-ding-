@@ -34,6 +34,10 @@ export const MONGODB_URI =
   process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || '';
 export const MONGODB_DB = process.env.MONGODB_DB || 'huss_huss_slop';
 
+// Optional password for the in-app admin panel (live banners). When unset the
+// server generates one at boot and prints it to the logs.
+export const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || '').trim();
+
 let cachedAuth = null;
 
 function normalizeCookieText(text) {

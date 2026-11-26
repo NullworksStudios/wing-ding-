@@ -41,7 +41,6 @@ const EXPLORE_TAGS = [
 ];
 
 const FEED_TTL_MS = 5 * 60 * 1000;
-const RECENT_VIEW_MS = 6 * 60 * 60 * 1000;
 // Two clips per channel keeps the feed feeling like a mix, not a channel dump.
 const MAX_ITEMS_PER_CHANNEL = 2;
 const MAX_CACHED_CLIENTS = 250;
@@ -173,6 +172,7 @@ async function maybeExplore() {
 
 async function gather(store, clientId) {
   const profile = store.profile(clientId, { create: false }) || { subscriptions: [], history: [] };
+  const watched = store.watchedIds(clientId);
   const prefs = store.preferences(clientId);
   const subscriptions = (profile.subscriptions || []).slice(0, 4);
   const personalized = prefs.length > 0 || subscriptions.length > 0;
@@ -188,16 +188,20 @@ async function gather(store, clientId) {
   };
 
   const primaryTags = [...new Set(tags)].slice(0, 5);
-  const [subscriptionResults, tagResults] = await Promise.all([
-    Promise.all(subscriptions.map((sub) => channelFeedItems(sub, 6).catch(() => []))),
-    Promise.all(primaryTags.map((tag) => feedTagItems(tag, 18).catch(() => [])))
+  const [rawSubscriptionResults, rawTagResults] = await Promise.all([
+    Promise.all(subscriptions.map((sub) => channelFeedItems(sub, 10).catch(() => []))),
+    Promise.all(primaryTags.map((tag) => feedTagItems(tag, 26).catch(() => [])))
   ]);
+  const unseen = (list) => list.filter((item) => !watched.has(item.id));
+  const subscriptionResults = rawSubscriptionResults.map(unseen);
+  const tagResults = rawTagResults.map(unseen);
 
   const relatedTags = deriveRelatedTags(subscriptionResults, subscriptions);
   const [relatedResults, explore] = await Promise.all([
-    Promise.all(relatedTags.map((tag) => feedTagItems(tag, 12).catch(() => []))),
+    Promise.all(relatedTags.map((tag) => feedTagItems(tag, 16).catch(() => []))),
     maybeExplore()
   ]);
+  const relatedClean = relatedResults.map(unseen);
 
   // Prefer a subscription with a real channel id for the headline; legacy
   // entries can carry messy display names.
@@ -212,7 +216,7 @@ async function gather(store, clientId) {
         ? `New from @${subscriptions[index].channel}`
         : 'From a channel you subscribed to'
     })),
-    ...relatedResults.map((items, index) => ({
+    ...relatedClean.map((items, index) => ({
       items,
       weight: 1.9,
       reason: spotlight?.channel
@@ -232,25 +236,20 @@ async function gather(store, clientId) {
 
   let items = mergeCandidates(groups);
 
-  if (items.length < 6) {
-    const extraSeeds = nextSeeds(2);
-    const extra = await Promise.all(extraSeeds.map((tag) => feedTagItems(tag, 18).catch(() => [])));
+  // Watched clips are gone for good, so top the feed back up from new topics
+  // instead of returning a short list once your history grows.
+  for (let attempt = 0; attempt < 2 && items.length < 16; attempt += 1) {
+    const extraSeeds = nextSeeds(3);
+    const extra = await Promise.all(extraSeeds.map((tag) => feedTagItems(tag, 24).catch(() => [])));
     items = mergeCandidates([
       ...groups,
       ...extra.map((list) => ({
-        items: list,
-        weight: 0.3,
+        items: list.filter((item) => !watched.has(item.id)),
+        weight: 0.4,
         reason: 'Fresh slop'
       }))
     ]);
   }
-
-  const now = Date.now();
-  const watched = new Set(
-    (profile.history || [])
-      .filter((video) => now - (video.viewedAt || 0) < RECENT_VIEW_MS)
-      .map((video) => video.id)
-  );
 
   items = items.filter((item) => !watched.has(item.id));
 
@@ -302,13 +301,15 @@ export async function buildFeed(store, clientId, { limit = 18, exclude = [] } = 
   }
 
   const excluded = new Set(exclude);
-  let items = cached.items.filter((item) => !excluded.has(item.id));
+  const watched = store.watchedIds(clientId);
+  const keep = (item) => !excluded.has(item.id) && !watched.has(item.id);
+  let items = cached.items.filter(keep);
 
-  if (items.length < 4 && Date.now() - cached.at > 30_000) {
+  if (items.length < 4) {
     const gathered = await gather(store, clientId);
     cached = { signature, at: Date.now(), ...gathered };
     rememberFeed(clientId, cached);
-    items = cached.items.filter((item) => !excluded.has(item.id));
+    items = cached.items.filter(keep);
   }
 
   return {

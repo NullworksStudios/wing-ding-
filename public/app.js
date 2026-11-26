@@ -38,6 +38,30 @@ const shareOutLabel = $('#shareOutLabel');
 const shareCodeValue = $('#shareCodeValue');
 const shareCopyBtn = $('#shareCopyBtn');
 const shareStatus = $('#shareStatus');
+const marketForm = $('#marketForm');
+const marketName = $('#marketName');
+const marketDesc = $('#marketDesc');
+const marketGrid = $('#marketGrid');
+const marketCount = $('#marketCount');
+const marketStatus = $('#marketStatus');
+const marketPostBtn = $('#marketPostBtn');
+const marketImageFile = $('#marketImageFile');
+const marketCoverLabel = $('#marketCoverLabel');
+const marketCoverPreview = $('#marketCoverPreview');
+const marketCoverImg = $('#marketCoverImg');
+const marketCoverClear = $('#marketCoverClear');
+const adminBtn = $('#adminBtn');
+const adminSheet = $('#adminSheet');
+const adminForm = $('#adminForm');
+const adminToken = $('#adminToken');
+const adminText = $('#adminText');
+const adminTone = $('#adminTone');
+const adminSeconds = $('#adminSeconds');
+const adminSend = $('#adminSend');
+const adminLive = $('#adminLive');
+const adminStatus = $('#adminStatus');
+const liveBanner = $('#liveBanner');
+const liveBannerText = $('#liveBannerText');
 const commentsSheet = $('#commentsSheet');
 const commentList = $('#commentList');
 const commentCount = $('#commentCount');
@@ -64,7 +88,10 @@ const state = {
   likedDirty: true,
   subsDirty: true,
   feedDirty: false,
-  viewTimer: null
+  viewTimer: null,
+  marketImage: '',
+  bannerTimer: null,
+  market: []
 };
 
 let slides = [];
@@ -86,7 +113,7 @@ const observer = new IntersectionObserver(
 
 /* ---------------- api ---------------- */
 
-async function api(path, { method = 'GET', body, signal, timeout = 150_000 } = {}) {
+async function api(path, { method = 'GET', body, signal, timeout = 150_000, headers } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeout);
   const abort = () => controller.abort();
@@ -94,7 +121,10 @@ async function api(path, { method = 'GET', body, signal, timeout = 150_000 } = {
   try {
     const response = await fetch(path, {
       method,
-      headers: body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: {
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...(headers || {})
+      },
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal
     });
@@ -219,7 +249,10 @@ function setView(view) {
     if (view === 'search') loadStatus();
     if (view === 'subs') loadSubs();
     if (view === 'liked') loadLiked();
-    if (view === 'feeds') loadExports();
+    if (view === 'feeds') {
+      loadExports();
+      loadMarket();
+    }
   }
 }
 
@@ -1274,7 +1307,7 @@ async function exportFeed() {
 
 async function importShareCode(code) {
   const clean = String(code || '').trim();
-  if (!clean) return;
+  if (!clean) return false;
   shareStatus.textContent = 'Importing…';
   try {
     const data = await api('/api/feed/import', { method: 'POST', body: { code: clean } });
@@ -1290,8 +1323,242 @@ async function importShareCode(code) {
     state.feedDirty = true;
     await Promise.all([loadSubs(), loadLiked()]).catch(() => {});
     toast(`Cloned ${label}`);
+    return true;
   } catch (error) {
     shareStatus.textContent = error.message;
+    return false;
+  }
+}
+
+/* ---------------- feedbook marketplace ---------------- */
+
+function setMarketCover(dataUrl) {
+  state.marketImage = dataUrl || '';
+  if (!marketCoverPreview) return;
+  marketCoverPreview.hidden = !state.marketImage;
+  if (state.marketImage) marketCoverImg.src = state.marketImage;
+  else marketCoverImg.removeAttribute('src');
+  if (marketCoverLabel) marketCoverLabel.textContent = state.marketImage ? '✓ cover ready' : '＋ cover image';
+}
+
+// Shrink covers in the browser so a post stays well under the 1 MB JSON cap.
+async function compressCover(file) {
+  const bitmap = await createImageBitmap(file);
+  const scale = Math.min(1, 640 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  return canvas.toDataURL('image/jpeg', 0.72);
+}
+
+function renderMarket(items) {
+  if (!marketGrid) return;
+  state.market = items;
+  marketGrid.innerHTML = '';
+  if (marketCount) marketCount.textContent = items.length ? `${plural(items.length, 'feed')} posted` : '';
+  if (!items.length) {
+    const hint = document.createElement('p');
+    hint.className = 'market-empty';
+    hint.textContent = 'Nothing posted yet. Be the first slopper — name a feed above.';
+    marketGrid.appendChild(hint);
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const post of items) {
+    const card = document.createElement('article');
+    card.className = 'market-item';
+    card.innerHTML = `
+      <div class="market-thumb"></div>
+      <div class="market-body">
+        <div class="market-name"></div>
+        <p class="market-desc"></p>
+        <div class="market-meta"></div>
+        <div class="market-buttons">
+          <button type="button" class="btn btn-lime market-load">Load</button>
+          <button type="button" class="btn btn-ghost market-copy">Copy code</button>
+          <button type="button" class="btn btn-ghost market-del" aria-label="Delete post">✕</button>
+        </div>
+      </div>`;
+    const thumb = card.querySelector('.market-thumb');
+    if (post.image) {
+      const img = document.createElement('img');
+      img.src = post.image;
+      img.alt = '';
+      img.loading = 'lazy';
+      thumb.appendChild(img);
+    } else {
+      thumb.classList.add('is-empty');
+      thumb.textContent = '🍲';
+    }
+    card.querySelector('.market-name').textContent = post.name;
+    card.querySelector('.market-desc').textContent = post.description || 'No description. Pure mystery slop.';
+    const counts = post.counts
+      ? `${plural(post.counts.likes, 'like')} · ${plural(post.counts.subscriptions, 'subscription')}`
+      : 'snapshot missing';
+    card.querySelector('.market-meta').textContent = `${counts} · ${timeAgo(post.createdAt)}`;
+    const loadBtn = card.querySelector('.market-load');
+    loadBtn.addEventListener('click', async () => {
+      loadBtn.disabled = true;
+      loadBtn.textContent = 'Loading…';
+      const ok = await importShareCode(post.code);
+      if (ok) {
+        state.feedDirty = true;
+        setView('feed');
+        await loadFeed(true);
+      }
+      loadBtn.disabled = false;
+      loadBtn.textContent = 'Load';
+    });
+    card.querySelector('.market-copy').addEventListener('click', () => copyText(post.code, 'Code copied'));
+    const del = card.querySelector('.market-del');
+    del.hidden = !post.mine;
+    del.addEventListener('click', async () => {
+      del.disabled = true;
+      try {
+        await api(`/api/market/${encodeURIComponent(post.id)}`, { method: 'DELETE' });
+        card.remove();
+        toast('Post removed');
+      } catch (error) {
+        toast(error.message, true);
+        del.disabled = false;
+      }
+    });
+    fragment.appendChild(card);
+  }
+  marketGrid.appendChild(fragment);
+}
+
+async function loadMarket() {
+  if (!marketGrid) return;
+  try {
+    const data = await api('/api/market');
+    renderMarket(data.items || []);
+  } catch (error) {
+    renderMarket([]);
+    if (marketStatus) marketStatus.textContent = error.message;
+  }
+}
+
+async function postToMarket() {
+  if (!marketForm) return;
+  const name = marketName.value.trim();
+  if (!name) {
+    marketStatus.textContent = 'Give your feed a name first.';
+    marketName.focus();
+    return;
+  }
+  marketPostBtn.disabled = true;
+  marketStatus.textContent = 'Posting…';
+  try {
+    const data = await api('/api/market', {
+      method: 'POST',
+      body: { name, description: marketDesc.value.trim(), image: state.marketImage }
+    });
+    marketName.value = '';
+    marketDesc.value = '';
+    setMarketCover('');
+    marketStatus.textContent = `Posted “${data.post.name}” · ${data.post.code}`;
+    toast('Feed posted to the feedbook');
+    const item = data.post;
+    renderMarket([item, ...state.market]);
+    loadExports();
+  } catch (error) {
+    marketStatus.textContent = error.message;
+  } finally {
+    marketPostBtn.disabled = false;
+  }
+}
+
+/* ---------------- admin live banners ---------------- */
+
+function showLiveBanner(banner) {
+  if (!liveBanner) return;
+  liveBannerText.textContent = banner.text;
+  liveBanner.dataset.tone = banner.tone || 'lime';
+  liveBanner.hidden = false;
+  liveBanner.classList.remove('run');
+  void liveBanner.offsetWidth;
+  liveBanner.classList.add('run');
+  clearTimeout(state.bannerTimer);
+  state.bannerTimer = setTimeout(() => {
+    liveBanner.hidden = true;
+    liveBanner.classList.remove('run');
+  }, Math.max(3, Number(banner.seconds) || 8) * 1000);
+}
+
+function connectLive() {
+  if (!window.EventSource) return;
+  const source = new EventSource('/api/live');
+  source.addEventListener('banner', (event) => {
+    try {
+      showLiveBanner(JSON.parse(event.data));
+    } catch {}
+  });
+  source.addEventListener('viewers', (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (adminLive) adminLive.textContent = `${plural(data.count, 'live viewer')}`;
+    } catch {}
+  });
+}
+
+function openAdmin() {
+  if (!adminSheet) return;
+  adminSheet.hidden = false;
+  adminToken.value = localStorage.getItem('hhl.admin') || adminToken.value;
+  adminStatus.textContent = '';
+  if (!adminToken.value) adminToken.focus();
+  else verifyAdmin();
+}
+
+function closeAdmin() {
+  if (adminSheet) adminSheet.hidden = true;
+}
+
+async function verifyAdmin() {
+  const token = adminToken.value.trim();
+  if (!token) return;
+  try {
+    const data = await api('/api/admin/session', { headers: { 'x-admin-token': token } });
+    localStorage.setItem('hhl.admin', token);
+    adminLive.textContent = plural(data.viewers, 'live viewer');
+    adminStatus.textContent = 'Password OK.';
+  } catch (error) {
+    adminStatus.textContent = error.message;
+  }
+}
+
+async function sendBanner() {
+  const token = adminToken.value.trim();
+  if (!token) {
+    adminStatus.textContent = 'Enter the admin password.';
+    adminToken.focus();
+    return;
+  }
+  const text = adminText.value.trim();
+  if (!text) {
+    adminStatus.textContent = 'Banner text is empty.';
+    adminText.focus();
+    return;
+  }
+  adminSend.disabled = true;
+  adminStatus.textContent = 'Sending…';
+  try {
+    const data = await api('/api/admin/banner', {
+      method: 'POST',
+      headers: { 'x-admin-token': token },
+      body: { text, tone: adminTone.value, seconds: Number(adminSeconds.value) }
+    });
+    localStorage.setItem('hhl.admin', token);
+    adminStatus.textContent = `Sent to ${plural(data.viewers, 'live viewer')}.`;
+    adminText.value = '';
+    setTimeout(closeAdmin, 550);
+  } catch (error) {
+    adminStatus.textContent = error.message;
+  } finally {
+    adminSend.disabled = false;
   }
 }
 
@@ -1401,6 +1668,49 @@ function bindEvents() {
     event.preventDefault();
     importShareCode(shareCodeInput.value);
   });
+
+  marketForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    postToMarket();
+  });
+  marketImageFile?.addEventListener('change', async () => {
+    const file = marketImageFile.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      marketStatus.textContent = 'That is not an image.';
+      return;
+    }
+    try {
+      setMarketCover(await compressCover(file));
+      marketStatus.textContent = '';
+    } catch {
+      marketStatus.textContent = 'Could not read that image.';
+    } finally {
+      marketImageFile.value = '';
+    }
+  });
+  marketCoverClear?.addEventListener('click', () => setMarketCover(''));
+
+  adminBtn?.addEventListener('click', () => {
+    if (adminSheet?.hidden === false) closeAdmin();
+    else openAdmin();
+  });
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('[data-close-admin]')) closeAdmin();
+  });
+  adminForm?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    sendBanner();
+  });
+  adminToken?.addEventListener('blur', verifyAdmin);
+  adminToken?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      verifyAdmin();
+    }
+  });
+
+  connectLive();
 
   window.addEventListener('resize', moveTabGlider);
   tabsEl?.classList.add('glider-ready');

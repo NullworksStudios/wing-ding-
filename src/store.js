@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomInt } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 import { tagsFromTitle, cleanText, extractVideoId } from './util.js';
 
 const MAX_LIKES = 500;
@@ -11,8 +11,22 @@ const MAX_COMMENTS_PER_VIDEO = 2000;
 const MAX_SUBSCRIPTIONS = 200;
 const MAX_CLIENTS = 500;
 const MAX_SHARES = 500;
+const MAX_MARKET_POSTS = 120;
+const MAX_IMAGE_CHARS = 400_000;
 
 const SHARE_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+
+// Marketplace covers are either an uploaded, already-resized data URL from the
+// browser or a plain https image link. Anything else is dropped.
+function coverImage(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (!text) return '';
+  if (/^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i.test(text)) {
+    return text.length <= MAX_IMAGE_CHARS ? text : '';
+  }
+  if (/^https:\/\/[^\s"'<>]+$/i.test(text) && text.length <= 600) return text;
+  return '';
+}
 
 function emptyProfile() {
   return {
@@ -31,6 +45,7 @@ function emptyData() {
     comments: {},
     videos: {},
     shares: {},
+    market: [],
     primaryAssigned: false,
     createdAt: Date.now()
   };
@@ -129,6 +144,7 @@ export class Store {
     if (!data.comments || typeof data.comments !== 'object') data.comments = {};
     if (!data.videos || typeof data.videos !== 'object') data.videos = {};
     if (!data.shares || typeof data.shares !== 'object') data.shares = {};
+    if (!Array.isArray(data.market)) data.market = [];
     data.primaryAssigned = Boolean(data.primaryAssigned);
 
     // Older versions kept a single global profile. Move it intact to the
@@ -559,6 +575,79 @@ export class Store {
       this.save();
     }
     return { removed: profile.exports.length !== before };
+  }
+
+  // Every video this profile has opened, so the feed can skip them for good
+  // instead of replaying the same clips every few hours.
+  watchedIds(clientId) {
+    const profile = this.profile(clientId, { create: false });
+    const seen = new Set();
+    for (const video of profile?.history || []) {
+      const id = extractVideoId(video?.id || '');
+      if (id) seen.add(id);
+    }
+    return seen;
+  }
+
+  marketPost(post, clientId) {
+    const share = this.data.shares[post.code];
+    return {
+      id: post.id,
+      name: post.name,
+      description: post.description || '',
+      image: post.image || '',
+      code: post.code,
+      createdAt: post.createdAt,
+      mine: Boolean(clientId && post.clientId === clientId),
+      counts: share
+        ? {
+            likes: share.snapshot.likes.length,
+            searches: share.snapshot.searches.length,
+            subscriptions: share.snapshot.subscriptions.length
+          }
+        : null
+    };
+  }
+
+  marketPosts(clientId, limit = 60) {
+    return (this.data.market || []).slice(0, limit).map((post) => this.marketPost(post, clientId));
+  }
+
+  addMarketPost(clientId, { name, description, image } = {}) {
+    const label = cleanText(name, 40);
+    if (!label) return { error: 'Give your feed a name.' };
+    const profile = this.profile(clientId);
+    if (!profile) return { error: 'No profile on this device yet.' };
+    const hasTaste =
+      profile.likes.length || profile.searches.length || profile.subscriptions.length;
+    if (!hasTaste) return { error: 'Like, search or subscribe to something first, then post.' };
+    const share = this.createShare(clientId, { name: label });
+    if (!share) return { error: 'Could not snapshot this feed.' };
+    const post = {
+      id: randomUUID(),
+      name: label,
+      description: cleanText(description, 240),
+      image: coverImage(image),
+      code: share.code,
+      clientId: String(clientId || ''),
+      createdAt: Date.now()
+    };
+    this.data.market = [post, ...(this.data.market || [])].slice(0, MAX_MARKET_POSTS);
+    this.bump();
+    this.save();
+    return { post: this.marketPost(post, clientId) };
+  }
+
+  removeMarketPost(clientId, id) {
+    const post = (this.data.market || []).find((entry) => entry.id === id);
+    if (!post) return { removed: false, error: 'That post is already gone.' };
+    if (post.clientId !== String(clientId || '')) {
+      return { removed: false, error: 'You can only remove your own posts.' };
+    }
+    this.data.market = (this.data.market || []).filter((entry) => entry.id !== id);
+    this.bump();
+    this.save();
+    return { removed: true };
   }
 
   getShare(code) {

@@ -35,7 +35,14 @@ yt-dlp's `visionos` player client when no YouTube cookies are available.
 - **Adaptive quality** — tries 720p first; if the download falls below
   `SLOW_KBPS`, it kills the attempt and retries at 480p, then prefers 480p for the
   rest of the process.
-- **Disk cache** — MP4s live on disk with LRU eviction up to `CACHE_MAX_MB`.
+- **Disk cache** - MP4s live on disk with LRU eviction up to `CACHE_MAX_MB`.
+- **No repeats** - videos you have opened are excluded from For You permanently
+  (not just for a few hours), and the feed refills itself from fresh topics.
+- **Feedbook Marketplace** - post a feed with a name, blurb and cover image;
+  anyone can hit **Load** to clone it into their own For You. Posts are stored
+  server-side with the export code they minted.
+- **Live admin banners** - a password-protected panel in the web UI broadcasts a
+  banner to every connected viewer in real time over Server-Sent Events.
 - **Auth fallback** — `YT_COOKIE` (raw cookies.txt contents or a path) /
   `YT_COOKIE_FILE`, otherwise `player_client=visionos`.
 
@@ -102,6 +109,7 @@ pick up a fresh binary (the Dockerfile always pulls `latest`).
 | `CACHE_MAX_MB` | `450` | Max size of the MP4 cache; LRU eviction beyond this. |
 | `MONGODB_URI` | *(blank)* | Mongo connection string. Railway's plugin sets `MONGO_URL`, which is also read. |
 | `MONGODB_DB` | `huss_huss_slop` | Database name used inside Mongo. |
+| `ADMIN_TOKEN` | *(random)* | Password for the ⚙ admin panel / live banners. Random per boot if unset. |
 | `MAX_HEIGHT` | `720` | Preferred vertical resolution. |
 | `FALLBACK_HEIGHT` | `480` | Resolution used when the link is slow. |
 | `SLOW_KBPS` | `350` | Below this speed the 720p attempt is killed. `0` disables. |
@@ -163,6 +171,27 @@ Express (src/server.js)
 - A client is identified by the `hhl_cid` cookie (or an `x-client-id` header for
   scripts). The first real page visit adopts the pre-multi-client profile, so an
   existing install keeps its likes and subscriptions.
+- Every opened video is recorded in that client's history and excluded from For
+  You for good. If filtering leaves too few clips, the feed pulls extra rotating
+  topics instead of padding with repeats.
+- Live banners ride a single SSE connection per browser (`/api/live`); the admin
+  endpoint pushes `banner` events and the page renders them as a floating pill.
+
+## Admin banners
+
+Set `ADMIN_TOKEN` (or read the generated password from the boot log), open the
+site, click the **⚙** button in the top bar, paste the password, type a message
+and hit **Send live**. Every connected browser shows it for the chosen duration.
+Tones: lime, blue, amber, red. The panel also shows the live viewer count.
+
+The same thing from a terminal:
+
+```bash
+curl -X POST https://your-app.up.railway.app/api/admin/banner \
+  -H "content-type: application/json" \
+  -H "x-admin-token: $ADMIN_TOKEN" \
+  -d '{"text":"SLOP HOUR STARTS NOW","tone":"lime","seconds":8}'
+```
 
 ## API sketch
 
@@ -176,6 +205,12 @@ Express (src/server.js)
 | `DELETE` | `/api/feed/shares/:code` | Forget an export (the code itself still works). |
 | `GET` | `/api/feed/shared/:code` | Inspect a share code's name and counts. |
 | `POST` | `/api/feed/import` | Replace this client's tastes with `{ "code": "name-or-code" }`. |
+| `GET` | `/api/market` | Feedbook posts (name, blurb, cover, code, counts). |
+| `POST` | `/api/market` | Post this client's feed: `{ "name", "description", "image" }`. |
+| `DELETE` | `/api/market/:id` | Remove one of your own posts. |
+| `GET` | `/api/live` | Server-Sent Events stream: live banners + viewer count. |
+| `POST` | `/api/admin/banner` | Broadcast `{ "text", "tone", "seconds" }`; header `x-admin-token`. |
+| `GET` | `/api/admin/session` | Validate the admin password and read the live viewer count. |
 | `GET` | `/api/search?q=...&kind=auto\|topic\|tag\|channel` | Search Shorts (exact titles first). |
 | `GET` | `/api/liked` | Liked videos. |
 | `GET` / `POST` / `DELETE` | `/api/subscriptions` | List, toggle (`subscribed:false`), or remove subscriptions. |
