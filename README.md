@@ -81,11 +81,14 @@ Huss Huss Slop listening on http://0.0.0.0:8080
    the app auto-detects, so likes, comments, subscriptions and **feed share codes**
    survive redeploys. Without Mongo, mount a **Volume** at `/app/data` instead —
    otherwise all state (and any export code you made) is wiped on every deploy.
-5. *(Recommended)* Mount a **Volume** at `/app/data` for the video cache (the free
+5. *(Recommended)* Add the **Redis** plugin. `REDIS_URL` is injected; feed builds,
+   share lookups and marketplace reads are cached there. The DB remains the
+   source of truth and Redis is only a cache.
+6. *(Recommended)* Mount a **Volume** at `/app/data` for the video cache (the free
    500 MB volume holds roughly 450 MB of MP4s plus `db.json`).
-6. *(Optional but recommended)* Add `YT_COOKIE` as a variable. Without cookies,
+7. *(Optional but recommended)* Add `YT_COOKIE` as a variable. Without cookies,
    datacenter IPs may be asked to "sign in to confirm you're not a bot".
-7. Healthcheck is `/api/health` and the app listens on Railway's injected `PORT`.
+8. Healthcheck is `/api/health` and the app listens on Railway's injected `PORT`.
 
 The image installs a self-contained `yt-dlp_linux` binary (no Python), plus
 `ffmpeg` and `ca-certificates`. `yt-dlp` moves fast — redeploy periodically to
@@ -109,6 +112,7 @@ pick up a fresh binary (the Dockerfile always pulls `latest`).
 | `CACHE_MAX_MB` | `450` | Max size of the MP4 cache; LRU eviction beyond this. |
 | `MONGODB_URI` | *(blank)* | Mongo connection string. Railway's plugin sets `MONGO_URL`, which is also read. |
 | `MONGODB_DB` | `huss_huss_slop` | Database name used inside Mongo. |
+| `REDIS_URL` | *(blank)* | Cache for feed builds/shares/market. Railway's plugin injects it; falls back to memory. |
 | `ADMIN_TOKEN` | *(random)* | Password for the ⚙ admin panel / live banners. Random per boot if unset. |
 | `MAX_HEIGHT` | `720` | Preferred vertical resolution. |
 | `FALLBACK_HEIGHT` | `480` | Resolution used when the link is slow. |
@@ -176,6 +180,10 @@ Express (src/server.js)
   topics instead of padding with repeats.
 - Live banners ride a single SSE connection per browser (`/api/live`); the admin
   endpoint pushes `banner` events and the page renders them as a floating pill.
+- At boot the durable DB (Mongo, else `db.json`) is loaded first, then Redis is
+  warmed from it. Feed builds (5 min), share codes/names (1 h) and the market
+  list (30 s) are cached in Redis. Every mutation still writes the DB, and the
+  affected Redis keys are refreshed or dropped, so Redis is never authoritative.
 
 ## Admin banners
 

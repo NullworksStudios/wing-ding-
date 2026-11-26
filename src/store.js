@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomInt, randomUUID } from 'node:crypto';
 import { tagsFromTitle, cleanText, extractVideoId } from './util.js';
+import { cacheGet, cacheSet, cacheDel } from './cache.js';
 
 const MAX_LIKES = 500;
 const MAX_HISTORY = 400;
@@ -556,7 +557,49 @@ export class Store {
     }
     this.bump();
     this.save();
-    return this.data.shares[code];
+    const share = this.data.shares[code];
+    this.cacheShare(share);
+    cacheDel('hhl:market');
+    return share;
+  }
+
+  cacheShare(share) {
+    if (!share?.code) return;
+    cacheSet(`hhl:share:${share.code}`, JSON.stringify(share), 3600);
+    const label = String(share.name || '').trim().toLowerCase();
+    if (label) cacheSet(`hhl:share-name:${label}`, share.code, 3600);
+  }
+
+  // Called once after the durable DB has loaded: mirror the hot reads into
+  // Redis so the first visitor does not pay for a cold lookup.
+  async warmCache() {
+    const shares = Object.values(this.data.shares || {});
+    for (const share of shares) this.cacheShare(share);
+    await cacheSet('hhl:market', JSON.stringify(this.marketBase()), 30);
+    return { shares: shares.length, market: (this.data.market || []).length };
+  }
+
+  // Redis-first lookup for share codes and names. Falls back to the in-memory
+  // copy (which itself came from the durable DB at boot).
+  async findShareFast(value) {
+    const key = String(value || '').trim().toLowerCase();
+    if (!key) return null;
+    const direct = await cacheGet(`hhl:share:${key}`);
+    if (direct) {
+      try {
+        return JSON.parse(direct);
+      } catch {}
+    }
+    const namedCode = await cacheGet(`hhl:share-name:${key}`);
+    if (namedCode) {
+      const named = await cacheGet(`hhl:share:${namedCode}`);
+      if (named) {
+        try {
+          return JSON.parse(named);
+        } catch {}
+      }
+    }
+    return this.findShare(key);
   }
 
   exports(clientId) {
@@ -609,8 +652,48 @@ export class Store {
     };
   }
 
+  // Cache-safe version: no per-client "mine" flag, so every client can share
+  // the same Redis value.
+  marketBase() {
+    return (this.data.market || []).map((post) => this.marketPost(post, ''));
+  }
+
   marketPosts(clientId, limit = 60) {
-    return (this.data.market || []).slice(0, limit).map((post) => this.marketPost(post, clientId));
+    return this.marketBase()
+      .slice(0, limit)
+      .map((post) => ({
+        ...post,
+        mine: Boolean(
+          clientId &&
+            (this.data.market || []).find((entry) => entry.id === post.id)?.clientId === clientId
+        )
+      }));
+  }
+
+  marketPostsFast(clientId, limit = 60) {
+    const decorate = (base) =>
+      base
+        .slice(0, limit)
+        .map((post) => ({
+          ...post,
+          mine: Boolean(
+            clientId &&
+              (this.data.market || []).find((entry) => entry.id === post.id)?.clientId === clientId
+          )
+        }));
+    return cacheGet('hhl:market')
+      .then((cached) => {
+        if (cached) {
+          try {
+            const base = JSON.parse(cached);
+            if (Array.isArray(base)) return decorate(base);
+          } catch {}
+        }
+        const base = this.marketBase();
+        cacheSet('hhl:market', JSON.stringify(base), 30);
+        return decorate(base);
+      })
+      .catch(() => decorate(this.marketBase()));
   }
 
   addMarketPost(clientId, { name, description, image } = {}) {
@@ -635,6 +718,7 @@ export class Store {
     this.data.market = [post, ...(this.data.market || [])].slice(0, MAX_MARKET_POSTS);
     this.bump();
     this.save();
+    cacheDel('hhl:market');
     return { post: this.marketPost(post, clientId) };
   }
 
@@ -647,6 +731,7 @@ export class Store {
     this.data.market = (this.data.market || []).filter((entry) => entry.id !== id);
     this.bump();
     this.save();
+    cacheDel('hhl:market');
     return { removed: true };
   }
 

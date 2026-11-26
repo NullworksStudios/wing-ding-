@@ -23,6 +23,7 @@ import { ensureDownload, getJob, cachedFile, cacheInfo, queueInfo, startDownload
 import { markActive, isIdle, startIdleWatcher, stopIdleWatcher } from './idle.js';
 import { buildFeed, invalidateFeed } from './feed.js';
 import { enrichItems } from './enrich.js';
+import { initCache, cacheMode, cacheClose } from './cache.js';
 
 ensureDirs();
 const store = new Store(path.join(DATA_DIR, 'db.json'), {
@@ -30,6 +31,11 @@ const store = new Store(path.join(DATA_DIR, 'db.json'), {
   mongoDb: MONGODB_DB
 });
 await store.init();
+const cache = await initCache();
+const warmed = await store.warmCache();
+console.log(
+  `[cache] ${cache.mode} · warmed ${warmed.shares} share(s), ${warmed.market} market post(s) from the DB`
+);
 const auth = getAuth();
 startDownloads();
 startIdleWatcher();
@@ -220,6 +226,7 @@ app.get('/api/health', (req, res) => {
     ok: true,
     idle: isIdle(),
     storage: store.storage,
+    cache: cacheMode(),
     shares: Object.keys(store.data.shares).length,
     uptime: Math.round(process.uptime())
   });
@@ -240,6 +247,7 @@ app.get(
       recentSearches: store.recentSearches(req.clientId, 8),
       persistence: {
         storage: store.storage,
+        cache: cacheMode(),
         dataDir: DATA_DIR,
         mount: disks.mount,
         durable: store.storage === 'mongo' || Boolean(disks.durable)
@@ -373,41 +381,50 @@ app.get('/api/feed/shared', (req, res) => {
   res.json({ items, count: items.length });
 });
 
-app.get('/api/feed/shared/:code', (req, res) => {
-  const share = store.findShare(req.params.code);
-  if (!share) return res.status(404).json({ error: 'That feed code or name does not exist on this server.' });
-  res.json({
-    code: share.code,
-    name: share.name || '',
-    createdAt: share.createdAt,
-    counts: {
-      likes: share.snapshot.likes.length,
-      searches: share.snapshot.searches.length,
-      subscriptions: share.snapshot.subscriptions.length
-    }
-  });
-});
-
-app.post('/api/feed/import', (req, res) => {
-  const value = cleanText(req.body?.code, 40);
-  if (!value) return res.status(400).json({ error: 'Enter a feed code or feed name.' });
-  const share = store.findShare(value);
-  if (!share) {
-    const total = Object.keys(store.data.shares).length;
-    return res.status(404).json({
-      error: `No feed named "${value}" (or code) exists on this server (${total} saved). Export it again from the PC that has the feed, and make sure both PCs use the same site URL.`
+app.get(
+  '/api/feed/shared/:code',
+  wrap(async (req, res) => {
+    const share = await store.findShareFast(req.params.code);
+    if (!share) return res.status(404).json({ error: 'That feed code or name does not exist on this server.' });
+    res.json({
+      code: share.code,
+      name: share.name || '',
+      createdAt: share.createdAt,
+      counts: {
+        likes: share.snapshot.likes.length,
+        searches: share.snapshot.searches.length,
+        subscriptions: share.snapshot.subscriptions.length
+      }
     });
-  }
-  const matchedByName = share.code.toLowerCase() !== value.toLowerCase();
-  const result = store.importShare(req.clientId, share);
-  invalidateFeed(req.clientId);
-  res.json({ ...result, code: share.code, matchedByName });
-});
+  })
+);
 
-app.get('/api/market', (req, res) => {
-  const items = store.marketPosts(req.clientId);
-  res.json({ items, count: items.length });
-});
+app.post(
+  '/api/feed/import',
+  wrap(async (req, res) => {
+    const value = cleanText(req.body?.code, 40);
+    if (!value) return res.status(400).json({ error: 'Enter a feed code or feed name.' });
+    const share = await store.findShareFast(value);
+    if (!share) {
+      const total = Object.keys(store.data.shares).length;
+      return res.status(404).json({
+        error: `No feed named "${value}" (or code) exists on this server (${total} saved). Export it again from the PC that has the feed, and make sure both PCs use the same site URL.`
+      });
+    }
+    const matchedByName = share.code.toLowerCase() !== value.toLowerCase();
+    const result = store.importShare(req.clientId, share);
+    invalidateFeed(req.clientId);
+    res.json({ ...result, code: share.code, matchedByName });
+  })
+);
+
+app.get(
+  '/api/market',
+  wrap(async (req, res) => {
+    const items = await store.marketPostsFast(req.clientId);
+    res.json({ items, count: items.length });
+  })
+);
 
 app.post('/api/market', (req, res) => {
   if (!allow(`market:${clientKey(req)}`, 12, 60_000)) {
@@ -597,6 +614,9 @@ async function shutdown(signal) {
   stopIdleWatcher();
   try {
     await store.close();
+  } catch {}
+  try {
+    await cacheClose();
   } catch {}
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 8_000).unref();

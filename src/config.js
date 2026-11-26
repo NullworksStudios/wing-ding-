@@ -34,6 +34,10 @@ export const MONGODB_URI =
   process.env.MONGODB_URI || process.env.MONGO_URL || process.env.MONGO_URI || '';
 export const MONGODB_DB = process.env.MONGODB_DB || 'huss_huss_slop';
 
+// Redis is a fast cache in front of the durable DB. Railway's Redis plugin
+// injects REDIS_URL; REDIS_TLS_URL covers providers that hand out a TLS URL.
+export const REDIS_URL = process.env.REDIS_URL || process.env.REDIS_TLS_URL || '';
+
 // Optional password for the in-app admin panel (live banners). When unset the
 // server generates one at boot and prints it to the logs.
 export const ADMIN_TOKEN = String(process.env.ADMIN_TOKEN || '').trim();

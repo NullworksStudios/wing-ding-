@@ -1,5 +1,6 @@
 import { feedTagItems, channelFeedItems } from './ytdlp.js';
 import { tagsFromTitle } from './util.js';
+import { cacheGet, cacheSet, cacheDel, cacheDelPrefix, FEED_PREFIX } from './cache.js';
 
 const SEEDS = [
   'funny',
@@ -292,12 +293,29 @@ export async function buildFeed(store, clientId, { limit = 18, exclude = [] } = 
     .map((s) => s.key)
     .join(',')}`;
   let cached = feedCache.get(clientId);
+  const feedKey = `${FEED_PREFIX}${clientId}`;
+
+  // On a cold process, Redis may already hold this client's last feed.
+  if (!cached) {
+    const remote = await cacheGet(feedKey);
+    if (remote) {
+      try {
+        const restored = JSON.parse(remote);
+        if (restored?.signature === signature && Date.now() - restored.at <= FEED_TTL_MS) {
+          cached = restored;
+          rememberFeed(clientId, cached);
+        }
+      } catch {}
+    }
+  }
+
   const stale = !cached || cached.signature !== signature || Date.now() - cached.at > FEED_TTL_MS;
 
   if (stale) {
     const gathered = await gather(store, clientId);
     cached = { signature, at: Date.now(), ...gathered };
     rememberFeed(clientId, cached);
+    cacheSet(feedKey, JSON.stringify(cached), Math.round(FEED_TTL_MS / 1000));
   }
 
   const excluded = new Set(exclude);
@@ -309,6 +327,7 @@ export async function buildFeed(store, clientId, { limit = 18, exclude = [] } = 
     const gathered = await gather(store, clientId);
     cached = { signature, at: Date.now(), ...gathered };
     rememberFeed(clientId, cached);
+    cacheSet(feedKey, JSON.stringify(cached), Math.round(FEED_TTL_MS / 1000));
     items = cached.items.filter(keep);
   }
 
@@ -325,6 +344,11 @@ export async function buildFeed(store, clientId, { limit = 18, exclude = [] } = 
 }
 
 export function invalidateFeed(clientId) {
-  if (clientId) feedCache.delete(clientId);
-  else feedCache.clear();
+  if (clientId) {
+    feedCache.delete(clientId);
+    cacheDel(`${FEED_PREFIX}${clientId}`);
+  } else {
+    feedCache.clear();
+    cacheDelPrefix(FEED_PREFIX);
+  }
 }
